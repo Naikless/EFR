@@ -22,8 +22,6 @@ class Detonation:
         self.P1 = P1
         self.composition = q
         self.mech = mech
-        self.D = 3e-2
-        self.unburnt_ratio = 0
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self.ct = ct
@@ -92,101 +90,6 @@ class Detonation:
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
             return self._znd_out
-        
-    def unburntPockets(self, ratio = None, weakShockVel=None, dt=1e-8, reactor = '1D', **kwargs):
-        if ratio is None:
-            ratio = self.unburnt_ratio
-        
-        if weakShockVel is None:
-            weakShockVel  = 0.8 * self.CJspeed
-        
-        # create mixture state of unburnt pockets with ZND products
-        gas_znd = self.ct.Solution(self.mech)
-        gas_znd.TPY = self.znd['T'][-1], self.znd['P'][-1], self.znd['species'][:,-1]
-        
-        if reactor == '1D':
-            gas_flame = self.postFlame(self.postShock_fr(weakShockVel), **kwargs)
-        elif reactor == 'PSR':
-            gas_flame = self.postPSR(self.postShock_fr(weakShockVel), dt=dt, **kwargs)
-        
-        # include unreacted pockets by mixing cantera quantity objects
-        znd = ct.Quantity(gas_znd, mass=1, constant='HP')
-        unburnt = ct.Quantity(gas_flame, mass=ratio, constant='HP')
-        
-        mix = znd + unburnt
-        
-        mix_state = mix.phase
-        
-        return mix_state
-    
-    def postFlame(self,state, threshold=0.999, model='Mix'):
-        
-        if hasattr(self, 'post_flame_state'):
-            gas = self.ct.Solution(self.mech)
-            gas.state = self.post_flame_state
-            return gas
-        else:
-            from scipy.integrate import cumtrapz, trapz 
-            
-            width = 0.001
-            
-            # Set up flame object
-            f = self.ct.FreeFlame(state, width=width)
-            f.set_refine_criteria(ratio=3, slope=0.01, curve=0.5)
-            
-            # Solve with chosen transport model
-            f.transport_model = model
-            print("\nSolving 1D free flame with transport model '" + model + "'\n")
-            f.solve(loglevel=0, auto=True)
-            
-            # find point of threshold heat release
-            rel_heat_release = cumtrapz(f.heat_release_rate, f.grid)/trapz(f.heat_release_rate, f.grid)
-            idx = self.np.argmin(self.np.abs(rel_heat_release-threshold))
-            
-            
-            gas = self.ct.Solution(self.mech)
-            gas.TPX = f.T[idx], f.P, f.X[:,idx]
-            self.post_flame_state = gas.state
-            
-            return gas
-    
-    def postPSR(self,state, threshold=0.999, constant='P', dt=1e-8, t_end = 1e-3):
-        
-        if hasattr(self, 'post_psr_state'):
-            gas = self.ct.Solution(self.mech)
-            gas.state = self.post_psr_state
-            return gas
-        else:
-            from scipy.integrate import cumtrapz, trapz
-            
-            # Set up reactor
-            if constant == 'P':
-                reactor = self.ct.ConstPressureReactor(state)
-            elif constant == 'V':
-                reactor = self.ct.Reactor(state)
-            
-            # set up reactor net
-            net = self.ct.ReactorNet([reactor])
-            time = 0.
-            states = self.ct.SolutionArray(self.ct.Solution(self.mech))
-            
-            print("\nSolving PSR with constant " + constant + "\n")
-            while time < t_end:
-                time += dt
-                net.advance(time)
-                states.append(reactor.thermo.state)
-            
-            # find point of threshold heat release
-            heat_release_rate = -np.array([np.dot(state.net_rates_of_progress, state.delta_enthalpy) for state in states])
-            rel_heat_release = cumtrapz(heat_release_rate)/trapz(heat_release_rate)
-            idx = self.np.argmin(self.np.abs(rel_heat_release-threshold))
-            
-            
-            gas = self.ct.Solution(self.mech)
-            gas.TPX = states.T[idx], states.P[idx], states.X[idx]
-            self.post_flame_state = gas.state
-            
-            return gas
         
         
 
@@ -269,15 +172,7 @@ class TaylorWave(Detonation):
         
         
         # construct reactor network including heat losses        
-        # r = self.ct.IdealGasReactor(gas)
         r = self.ct.IdealGasConstPressureReactor(gas)
-        
-        # assuming reactor wall at atmospheric conditions
-        # gas_out = self.ct.Solution(self.mech)
-        # gas_out.TPX = 293, self.ct.one_atm, 'O2:21,N2:79'
-        # outside = self.ct.Reservoir(gas_out)
-        
-        # wall = self.ct.Wall(r,outside)
         
         sim = self.ct.ReactorNet([r])
         states = self.ct.SolutionArray(r.thermo)
@@ -298,18 +193,13 @@ class TaylorWave(Detonation):
             gas.TP = T(x_,t_) , P(x_,t_)
             r.syncState()
             
-            # # adjust heat transfer coefficient according to Radulescu (DOI:10.2514/1.10286) based on Reynolds analogy
-            # wall.area = self.np.pi * self.D * u(x_,t_) * dt
-            # T_stag = (1+ (gamma_eq-1)/2 * (u(x_,t_)/soundspeed_eq(gas))**2) * gas.T
-            # transfer_coefficient = - self.C_f / self.D * gas.density * gas.cp_mass * np.abs(u(x_,t_))
-            # wall.set_heat_flux(transfer_coefficient * (T_stag - 293))
-            
             sim.advance(t_r_)
             states.append(r.thermo.state)
             
             stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
         
         return stateMatrix, columns, self.np.array(t[1:]), self.np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
+    
     
     def time_signal(self,x,t,dt=1e-6,multiprocessing=True):
         t_in = self.np.arange(dt,t,dt)
@@ -338,6 +228,7 @@ class TaylorWave(Detonation):
             columns = columns[0]
             
         return self.np.array(states), columns, self.np.array(t_out), self.np.array(u_out)
+    
     
     def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True):
                 
