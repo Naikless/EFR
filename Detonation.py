@@ -24,22 +24,22 @@ class Detonation:
         self.mech = mech
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
-        self.ct = ct
-        self.sdps = sdps
-        self.zndsolve = zndsolve
-        self.np = np
+        self._ct = ct
+        self._sdps = sdps
+        self._zndsolve = zndsolve
+        self._np = np
     
     @property
     def postShock_eq(self):
         if hasattr(self, 'postShock_eq_state'):
-            postShock_eq = self.ct.Solution(self.mech)
+            postShock_eq = self._ct.Solution(self.mech)
             postShock_eq.state = self.postShock_eq_state
             return postShock_eq
         else:
             U1 = self.CJspeed
             T1,P1,X1 = self.T1, self.P1, self.composition
             mech = self.mech
-            postShock_eq = self.sdps.PostShock_eq(U1,P1,T1,X1,mech)
+            postShock_eq = self._sdps.PostShock_eq(U1,P1,T1,X1,mech)
             self.postShock_eq_state = postShock_eq.state
             return postShock_eq
     
@@ -49,16 +49,16 @@ class Detonation:
         mech = self.mech
         if U1 is None:
             if hasattr(self, 'postShock_fr_state'):
-                postShock_fr = self.ct.Solution(mech)
+                postShock_fr = self._ct.Solution(mech)
                 postShock_fr.state = self.postShock_fr_state
                 return postShock_fr
             else:
                 U1 = self.CJspeed
-                postShock_fr = self.sdps.PostShock_fr(U1, P1, T1, X1, mech)
+                postShock_fr = self._sdps.PostShock_fr(U1, P1, T1, X1, mech)
                 self.postShock_fr_state = postShock_fr.state
                 return postShock_fr
         else:
-            postShock_fr = self.sdps.PostShock_fr(U1, P1, T1, X1, mech)
+            postShock_fr = self._sdps.PostShock_fr(U1, P1, T1, X1, mech)
             return postShock_fr
             
     
@@ -68,7 +68,7 @@ class Detonation:
         if hasattr(self, '_cj_speed'):
             return self._cj_speed
         else:
-            self._cj_speed = self.sdps.CJspeed(self.P1, self.T1, self.composition, mech=self.mech)
+            self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.composition, mech=self.mech)
             return self._cj_speed
 
     
@@ -80,13 +80,13 @@ class Detonation:
             U1 = self.CJspeed
             T1,P1,X1 = self.T1, self.P1, self.composition
             mech = self.mech
-            gas1 = self.ct.Solution(mech)
+            gas1 = self._ct.Solution(mech)
             gas1.TPX = T1,P1,X1
             
-            gas = self.sdps.PostShock_fr(U1,P1,T1,X1,mech)
+            gas = self._sdps.PostShock_fr(U1,P1,T1,X1,mech)
             
             print('\nSolving ZND reactor. This might take a while...\n')
-            znd_out = self.zndsolve(gas,gas1,U1,self.t_znd)
+            znd_out = self._zndsolve(gas,gas1,U1,self.t_znd)
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
             return self._znd_out
@@ -130,7 +130,7 @@ class TaylorWave(Detonation):
             if  x/t > CJspeed:
                 return self.u0 
             else:
-                return self.np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + self.u0
+                return self._np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + self.u0
         
         def T(x,t):
             if x/t > CJspeed:
@@ -149,7 +149,7 @@ class TaylorWave(Detonation):
                 return P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
         
         
-        gas = self.ct.Solution(self.mech)
+        gas = self._ct.Solution(self.mech)
         Y_init = self.znd['species'][:,-1]
         
         x = [x]
@@ -172,10 +172,10 @@ class TaylorWave(Detonation):
         
         
         # construct reactor network including heat losses        
-        r = self.ct.IdealGasConstPressureReactor(gas)
+        r = self._ct.IdealGasConstPressureReactor(gas)
         
-        sim = self.ct.ReactorNet([r])
-        states = self.ct.SolutionArray(r.thermo)
+        sim = self._ct.ReactorNet([r])
+        states = self._ct.SolutionArray(r.thermo)
         
         
         if len(t) == 1:
@@ -198,11 +198,11 @@ class TaylorWave(Detonation):
             
             stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
         
-        return stateMatrix, columns, self.np.array(t[1:]), self.np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
+        return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
     
     
     def time_signal(self,x,t,dt=1e-6,multiprocessing=True):
-        t_in = self.np.arange(dt,t,dt)
+        t_in = self._np.arange(dt,t,dt)
         
         if not multiprocessing:
             states = []
@@ -227,12 +227,12 @@ class TaylorWave(Detonation):
                 p.clear()
             columns = columns[0]
             
-        return self.np.array(states), columns, self.np.array(t_out), self.np.array(u_out)
+        return self._np.array(states), columns, self._np.array(t_out), self._np.array(u_out)
     
     
     def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True):
                 
-        x = self.np.arange(0,L,dx)
+        x = self._np.arange(0,L,dx)
         
         if not multiprocessing:
             states = []
@@ -251,7 +251,7 @@ class TaylorWave(Detonation):
                 p.clear()
             columns = columns[0]
         
-        return self.np.array(states), columns, x
+        return self._np.array(states), columns, x
 
 
 #%%
