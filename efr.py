@@ -188,7 +188,7 @@ class TaylorWave(Detonation):
         
         
         gas = self._ct.Solution(self.mech)
-        Y_init = self.znd['species'][:,-1]
+        Y_init = self.znd()['species'][:,-1]
         
         x = [x]
         t = [t]
@@ -234,7 +234,7 @@ class TaylorWave(Detonation):
             sim.advance(t_r_)
             states.append(r.thermo.state)
             
-            stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
+        stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
         
         return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
     
@@ -285,11 +285,29 @@ class TaylorWave(Detonation):
                 return states_[-1], columns
         
             with Pool(8) as p:
-                states, columns = list(tqdm(p.imap(f, x), total=len(x)))
+                results = list(tqdm(p.imap(f, x), total=len(x)))
+                states, columns =  [list(tup) for tup in zip(*results)]
                 p.clear()
             columns = columns[0]
         
-        return self._np.array(states), columns, x
+        # combine DFR and ZND data
+        states = self._np.array(states)
+        x_front = x[states[:,0] == states[-1,0]][0]
+        x_ZND = x_front-self.znd()['distance'][::-1]
+        filter_array = x < x_ZND[0]
+        x_comb = self._np.concatenate((x[filter_array],x_ZND,x[~(x < x_ZND[-1])]))
+        states = self._np.array(states)
+        
+        gas = self._ct.Solution(self.mech)
+        ZND_states = self._ct.SolutionArray(gas)
+        
+        for T,P,Y in zip(self.znd()['T'], self.znd()['P'], self.znd()['species'].transpose()):
+            ZND_states.append(TPY=(T,P,Y))
+        ZND_states = ZND_states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))[0][::-1]
+        
+        states_comb = list(self._np.concatenate((states[filter_array],ZND_states,states[~(x < x_ZND[-1])])))
+        
+        return self._np.array(states_comb), columns, x_comb
 
 
 #%%
@@ -298,10 +316,13 @@ if __name__ == '__main__':
     T0 = 295
     p0 = 1e5
     X0 = 'H2:42 ,O2:21, N2:79'
-    # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
-    wave = TaylorWave(T0,p0,X0, 'gri30.cti')
+    wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
+    # wave = TaylorWave(T0,p0,X0, 'gri30.cti')
     
     wave.znd(relTol=1e-8,absTol=1e-11)
+    
+    # wave.point_history(0, 1e-5, dt=5e-5)
+    states , columns, x = wave.profile(1e-4,1e-3,L=0.3,dt=5e-5)
     
     # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
