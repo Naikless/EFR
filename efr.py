@@ -17,45 +17,69 @@ from pathos.multiprocessing import ProcessingPool as Pool
 
 class Detonation:
     
+    class _DetProperty:
+        def __init__(self, value=None):
+            self.value = value
+        def __get__(self, instance, owner=None):
+            return self.value
+        def __set__(self, instance, value):
+            if value != self.value:
+                self.value = value
+                instance._force_recalc()
+    
+    @classmethod
+    def _set_init_state(cls,values):
+        cls.T1,cls.P1,cls.X1,cls.mech = [cls._DetProperty(value) for value in values]
+    
+    
     def __init__(self, T1, P1, q, mech='Klippenstein.cti'):
-        self.T1 = T1
-        self.P1 = P1
-        self.composition = q
-        self.mech = mech
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self._ct = ct
         self._sdps = sdps
         self._zndsolve = zndsolve
         self._np = np
+        #
+        self._set_init_state((T1,P1,q,mech))
+        self._force_recalc()
+    
+    def _force_recalc(self):
+        for prop in ['_cj_speed','_postShock_eq_state','_postShock_fr_state', '_znd_out']:
+            if hasattr(self,prop):
+                delattr(self,prop)
+        print('Calculating detonation properties')
+        self.CJspeed
+        self.postShock_eq
+        self.postShock_fr()
+                
     
     @property
     def postShock_eq(self):
-        if hasattr(self, 'postShock_eq_state'):
+        if hasattr(self, '_postShock_eq_state'):
             postShock_eq = self._ct.Solution(self.mech)
-            postShock_eq.state = self.postShock_eq_state
+            postShock_eq.state = self._postShock_eq_state
             return postShock_eq
         else:
             U1 = self.CJspeed
-            T1,P1,X1 = self.T1, self.P1, self.composition
+            T1,P1,X1 = self.T1, self.P1, self.X1
             mech = self.mech
             postShock_eq = self._sdps.PostShock_eq(U1,P1,T1,X1,mech)
-            self.postShock_eq_state = postShock_eq.state
+            self._postShock_eq_state = postShock_eq.state
             return postShock_eq
     
 
     def postShock_fr(self, U1=None):
-        T1,P1,X1 = self.T1, self.P1, self.composition
+        T1,P1,X1 = self.T1, self.P1, self.X1
         mech = self.mech
         if U1 is None:
-            if hasattr(self, 'postShock_fr_state'):
+            if hasattr(self, '_postShock_fr_state'):
                 postShock_fr = self._ct.Solution(mech)
-                postShock_fr.state = self.postShock_fr_state
+                postShock_fr.state = self._postShock_fr_state
                 return postShock_fr
             else:
                 U1 = self.CJspeed
                 postShock_fr = self._sdps.PostShock_fr(U1, P1, T1, X1, mech)
-                self.postShock_fr_state = postShock_fr.state
+                self._postShock_fr_state = postShock_fr.state
                 return postShock_fr
         else:
             postShock_fr = self._sdps.PostShock_fr(U1, P1, T1, X1, mech)
@@ -68,17 +92,17 @@ class Detonation:
         if hasattr(self, '_cj_speed'):
             return self._cj_speed
         else:
-            self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.composition, mech=self.mech)
+            self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.X1, mech=self.mech)
             return self._cj_speed
 
     
-    @property
+    # @property
     def znd(self):
         if hasattr(self, '_znd_out'):
              return self._znd_out
         else:
             U1 = self.CJspeed
-            T1,P1,X1 = self.T1, self.P1, self.composition
+            T1,P1,X1 = self.T1, self.P1, self.X1
             mech = self.mech
             gas1 = self._ct.Solution(mech)
             gas1.TPX = T1,P1,X1
@@ -89,6 +113,7 @@ class Detonation:
             znd_out = self._zndsolve(gas,gas1,U1,self.t_znd)
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
+            self._znd_recalc = False
             return self._znd_out
         
         
@@ -97,13 +122,22 @@ class TaylorWave(Detonation):
     
     def __init__(self, T1, P1, q, mech='Klippenstein.cti', u0=0):
         Detonation.__init__(self, T1, P1, q, mech)
-        self.a2_eq = soundspeed_eq(self.postShock_eq)
-        self.gamma_eq = self.a2_eq**2*self.postShock_eq.density/self.postShock_eq.P
-        self.u2 = self.CJspeed-self.a2_eq
         self.u0 = u0
-        self.mech = mech
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
         # self.C_f = 0.0062    # heat transfer coefficient directly from DOI:10.2514/1.10286
+    
+    @property
+    def a2_eq(self):
+        return soundspeed_eq(self.postShock_eq)
+    
+    @property
+    def gamma_eq(self):
+        return  self.a2_eq**2*self.postShock_eq.density/self.postShock_eq.P
+    
+    @property
+    def u2(self):
+        return self.CJspeed-self.a2_eq
+    
     
     
     def point_history(self,x,t,dt=1e-6):
@@ -179,7 +213,7 @@ class TaylorWave(Detonation):
         
         
         if len(t) == 1:
-            states.append(T=T1, P=P1, X=self.composition)
+            states.append(T=T1, P=P1, X=self.X1)
             stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
             
             return stateMatrix, columns, t, u(x[0],t[0])
@@ -260,7 +294,10 @@ if __name__ == '__main__':
     T0 = 295
     p0 = 1e5
     X0 = 'H2:42 ,O2:21, N2:79'
-    wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
+    # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
+    wave = TaylorWave(T0,p0,X0, 'gri30.cti')
+    
+    wave.T1 = 400
     
     # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
