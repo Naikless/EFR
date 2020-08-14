@@ -29,10 +29,10 @@ class Detonation:
     
     @classmethod
     def _set_init_state(cls,values):
-        cls.T1,cls.P1,cls.X1,cls.mech = [cls._DetProperty(value) for value in values]
+        cls.T1,cls.P1,cls.X1,cls.mech,cls.recalc = [cls._DetProperty(value) for value in values]
     
     
-    def __init__(self, T1, P1, q, mech='Klippenstein.cti'):
+    def __init__(self, T1, P1, q, mech='Klippenstein.cti', recalc=True):
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self._ct = ct
@@ -40,10 +40,15 @@ class Detonation:
         self._zndsolve = zndsolve
         self._np = np
         #
-        self._set_init_state((T1,P1,q,mech))
+        self._set_init_state((T1,P1,q,mech,recalc))
         self._force_recalc()
     
     def _force_recalc(self):
+        if not self.recalc:
+            if not hasattr(self,'_recalc_warning'):
+                print("\nDynamic recalculation is disabled! Detonation properties won't be updated unless called explicitly!\n")
+                self._recalc_warning = True
+            return
         for prop in ['_cj_speed','_postShock_eq_state','_postShock_fr_state', '_znd_out']:
             if hasattr(self,prop):
                 delattr(self,prop)
@@ -96,8 +101,8 @@ class Detonation:
             return self._cj_speed
 
     
-    # @property
-    def znd(self):
+
+    def znd(self, **kwargs):
         if hasattr(self, '_znd_out'):
              return self._znd_out
         else:
@@ -109,19 +114,18 @@ class Detonation:
             
             gas = self._sdps.PostShock_fr(U1,P1,T1,X1,mech)
             
-            print('\nSolving ZND reactor. This might take a while...\n')
-            znd_out = self._zndsolve(gas,gas1,U1,self.t_znd)
+            print('\nSolving ZND reactor. If this takes long, consider changing relTol and absTol\n')
+            znd_out = self._zndsolve(gas,gas1,U1,self.t_znd, **kwargs)
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
-            self._znd_recalc = False
             return self._znd_out
         
         
 
 class TaylorWave(Detonation):
     
-    def __init__(self, T1, P1, q, mech='Klippenstein.cti', u0=0):
-        Detonation.__init__(self, T1, P1, q, mech)
+    def __init__(self, T1, P1, q, mech='Klippenstein.cti', u0=0, recalc=True):
+        Detonation.__init__(self, T1, P1, q, mech, recalc)
         self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
         # self.C_f = 0.0062    # heat transfer coefficient directly from DOI:10.2514/1.10286
@@ -297,7 +301,7 @@ if __name__ == '__main__':
     # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     wave = TaylorWave(T0,p0,X0, 'gri30.cti')
     
-    wave.T1 = 400
+    wave.znd(relTol=1e-8,absTol=1e-11)
     
     # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
