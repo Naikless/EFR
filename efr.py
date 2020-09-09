@@ -209,7 +209,7 @@ class TaylorWave(Detonation):
         gas.TPY = T(x[0],t[0]) , P(x[0],t[0]) , Y_init
         
         
-        # construct reactor network including heat losses        
+        # construct reactor network
         r = self._ct.IdealGasConstPressureReactor(gas)
         
         sim = self._ct.ReactorNet([r])
@@ -220,7 +220,7 @@ class TaylorWave(Detonation):
             states.append(T=T1, P=P1, X=self.X1)
             stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
             
-            return stateMatrix, columns, t, u(x[0],t[0])
+            return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
             
         
         sim.advance(t_r[1])
@@ -265,7 +265,7 @@ class TaylorWave(Detonation):
                 p.clear()
             columns = columns[0]
             
-        return self._np.array(states), columns, self._np.array(t_out), self._np.array(u_out)
+        return {'states':self._np.array(states), 'columns':columns, 't':self._np.array(t_out), 'u':self._np.array(u_out)}
     
     
     def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True):
@@ -307,7 +307,7 @@ class TaylorWave(Detonation):
         
         states_comb = list(self._np.concatenate((states[filter_array],ZND_states,states[~(x < x_ZND[-1])])))
         
-        return self._np.array(states_comb), columns, x_comb
+        return {'states':self._np.array(states_comb), 'columns':columns, 'x':x_comb }
 
 
 #%%
@@ -321,8 +321,8 @@ if __name__ == '__main__':
     
     wave.znd(relTol=1e-8,absTol=1e-11)
     
-    # wave.point_history(0, 1e-5, dt=5e-5)
-    states , columns, x = wave.profile(1e-4,1e-3,L=0.3,dt=5e-5)
+    wave.point_history(0.1, 1e-5, dt=5e-5)
+    # states , columns, x = wave.profile(1e-4,1e-3,L=0.3,dt=5e-5)
     
     # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
