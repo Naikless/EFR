@@ -39,6 +39,7 @@ class Detonation:
         self._sdps = sdps
         self._zndsolve = zndsolve
         self._np = np
+        self._soundspeed_eq = soundspeed_eq
         #
         self._set_init_state((T1,P1,q,mech,recalc))
         self._force_recalc()
@@ -132,7 +133,7 @@ class TaylorWave(Detonation):
     
     @property
     def a2_eq(self):
-        return soundspeed_eq(self.postShock_eq)
+        return self._soundspeed_eq(self.postShock_eq)
     
     @property
     def gamma_eq(self):
@@ -218,7 +219,7 @@ class TaylorWave(Detonation):
         
         if len(t) == 1:
             states.append(T=T1, P=P1, X=self.X1)
-            stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
+            stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
             
             return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
             
@@ -234,7 +235,7 @@ class TaylorWave(Detonation):
             sim.advance(t_r_)
             states.append(r.thermo.state)
             
-        stateMatrix, columns = states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))
+        stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
         
         return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
     
@@ -303,7 +304,7 @@ class TaylorWave(Detonation):
         
         for T,P,Y in zip(self.znd()['T'], self.znd()['P'], self.znd()['species'].transpose()):
             ZND_states.append(TPY=(T,P,Y))
-        ZND_states = ZND_states.collect_data(cols=('T','P','X','D','mean_molecular_weight'))[0][::-1]
+        ZND_states = ZND_states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))[0][::-1]
         
         states_comb = list(self._np.concatenate((states[filter_array],ZND_states,states[~(x < x_ZND[-1])])))
         
@@ -313,6 +314,13 @@ class TaylorWave(Detonation):
 #%%
 
 if __name__ == '__main__':
+    det = TaylorWave(300,1e5,'H2:42,O2:21,N2:79', mech='Klippenstein_noCarbon.cti')
+    det.znd(relTol = 1e-8, absTol = 1e-15)
+    signal = det.point_history(0.1,1e-4)
+    
+    
+    
+    
     T0 = 295
     p0 = 1e5
     X0 = 'H2:42 ,O2:21, N2:79'
