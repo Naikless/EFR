@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import cantera as ct
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
+import pandas as pd
 
 class Detonation:
     
@@ -154,7 +155,7 @@ class TaylorWave(Detonation):
         P1 = self.P1
         a2_eq = self.a2_eq
         T1 = self.T1
-        u2 = CJspeed-a2_eq
+        u2 = CJspeed - self.znd()['U'][-1]  #CJspeed-a2_eq
         T2 = self.postShock_eq.T
         P2 = self.postShock_eq.P
         n = 1 / (1 - self.nu * (1 - 1/self.gamma_eq)) # polytropic exponent n = gamma/(gamma-nu(gamma-1)) ("Thermodynamik", Baehr)
@@ -195,7 +196,7 @@ class TaylorWave(Detonation):
         t = [t]
         while 1:
             if (t[-1] - dt)*CJspeed > x[-1]:         
-                x.append(x[-1] - u(x[-1],t[-1]) * dt)
+                x.append(x[-1] - u(x[-1],t[-1]-dt) * dt)
                 t.append(t[-1] - dt)
             else:
                 break
@@ -219,9 +220,12 @@ class TaylorWave(Detonation):
         
         if len(t) == 1:
             states.append(T=T1, P=P1, X=self.X1)
-            stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
+            # stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
+            statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
             
-            return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
+            statesDF[['t','u']] = t[0],u(x[0],t[0]-dt)
+            # return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
+            return statesDF
             
         
         sim.advance(t_r[1])
@@ -235,9 +239,13 @@ class TaylorWave(Detonation):
             sim.advance(t_r_)
             states.append(r.thermo.state)
             
-        stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
+        # stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
+        statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
+        statesDF['t'] = t[1:]
+        statesDF['u'] = [u(x_,t_-dt) for x_,t_ in zip(x[1:],t[1:])]
         
-        return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
+        # return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
+        return statesDF
     
     
     def time_signal(self,x,t,dt=1e-6,multiprocessing=True):
@@ -245,31 +253,27 @@ class TaylorWave(Detonation):
         
         if not multiprocessing:
             states = []
-            t_out = []
-            u_out = []
                 
             for t_i in  tqdm(t_in):
-                states_, columns, t_, u  = self.point_history(x, t_i, dt)
-                states.append(states_[-1])
-                t_out.append(t_[-1])
-                u_out.append(u[-1])
+                statesDF  = self.point_history(x, t_i, dt)
+                states.append(statesDF.iloc[-1])
         else:
             total = len(t_in)
                                   
             def f(t):
-                states_, columns, t_, u  = self.point_history(x, t, dt)
-                return states_[-1], columns, t_[-1], u[-1]
+                statesDF = self.point_history(x, t, dt)
+                return statesDF.iloc[-1]
             
             with Pool(8) as p:
-                results = list(tqdm(p.imap(f, t_in), total=total))
-                states, columns, t_out, u_out = [list(tup) for tup in zip(*results)]
+                states = list(tqdm(p.imap(f, t_in), total=total))
                 p.clear()
-            columns = columns[0]
+        
+        states_DF = pd.DataFrame(states)
             
-        return {'states':self._np.array(states), 'columns':columns, 't':self._np.array(t_out), 'u':self._np.array(u_out)}
+        return states_DF
     
     
-    def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True):
+    def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True,insertZND=True):
                 
         x = self._np.arange(0,L,dx)
         
@@ -277,60 +281,77 @@ class TaylorWave(Detonation):
             states = []
             
             for x_ in tqdm(x):
-                states_, columns, t_, u_  = self.point_history(x_, t0, dt)
-                states.append(states_[-1])
+                statesDF = self.point_history(x_, t0, dt)
+                states.append(statesDF.iloc[-1])
                 
         else:
             def f(x):
-                states_, columns, t_, u_  = self.point_history(x, t0, dt)
-                return states_[-1], columns
+                statesDF  = self.point_history(x, t0, dt)
+                return statesDF.iloc[-1]
         
             with Pool(8) as p:
-                results = list(tqdm(p.imap(f, x), total=len(x)))
-                states, columns =  [list(tup) for tup in zip(*results)]
+                states = list(tqdm(p.imap(f, x), total=len(x)))
+                # states =  [list(tup) for tup in zip(*results)]
                 p.clear()
-            columns = columns[0]
+
+        states_DF =  pd.DataFrame(states)       
+
+        # combine DFR and ZND data, if detonation is still inside tube
+        if not all(states_DF['T'] > 1.01*self.T1) and insertZND: #TODO! does not work for overdriven
+            states = states_DF.to_numpy()
+            x_front = x[states[:,0] == states[-1,0]][0]
+            x_ZND = x_front-self.znd()['distance'][::-1]
+            filter_array = x < x_ZND[0]
+            x_comb = self._np.concatenate((x[filter_array],x_ZND,x[~(x < x_ZND[-1])]))
+            
+            gas = self._ct.Solution(self.mech)
+            ZND_states = self._ct.SolutionArray(gas)
+            
+            u_znd = []
+            for T,P,Y,u in zip(self.znd()['T'], self.znd()['P'], self.znd()['species'].transpose(), self.znd()['U1']-self.znd()['U']):
+                ZND_states.append(TPY=(T,P,Y))
+                u_znd.append(u)
+            ZND_states = ZND_states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
+            ZND_states['t'] = t0
+            ZND_states['u'] = u_znd
+            
+            ZND_states_array = ZND_states.to_numpy()[::-1]
+            
+            states_comb = list(self._np.concatenate((states[filter_array],ZND_states_array,states[~(x < x_ZND[-1])])))
+            
+            states_comb = pd.DataFrame(states_comb,columns=ZND_states.columns)
         
-        # combine DFR and ZND data
-        states = self._np.array(states)
-        x_front = x[states[:,0] == states[-1,0]][0]
-        x_ZND = x_front-self.znd()['distance'][::-1]
-        filter_array = x < x_ZND[0]
-        x_comb = self._np.concatenate((x[filter_array],x_ZND,x[~(x < x_ZND[-1])]))
-        states = self._np.array(states)
+        else:
+            states_comb = states_DF
+            x_comb = x
+      
+        states_comb['x'] = x_comb
         
-        gas = self._ct.Solution(self.mech)
-        ZND_states = self._ct.SolutionArray(gas)
-        
-        for T,P,Y in zip(self.znd()['T'], self.znd()['P'], self.znd()['species'].transpose()):
-            ZND_states.append(TPY=(T,P,Y))
-        ZND_states = ZND_states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))[0][::-1]
-        
-        states_comb = list(self._np.concatenate((states[filter_array],ZND_states,states[~(x < x_ZND[-1])])))
-        
-        return {'states':self._np.array(states_comb), 'columns':columns, 'x':x_comb }
+        return states_comb
 
 
 #%%
 
-if __name__ == '__main__':
-    det = TaylorWave(300,1e5,'H2:42,O2:21,N2:79', mech='Klippenstein_noCarbon.cti')
-    det.znd(relTol = 1e-8, absTol = 1e-15)
-    signal = det.point_history(0.1,1e-4)
-    
-    
-    
+if __name__ == '__main__': 
+       
     
     T0 = 295
     p0 = 1e5
     X0 = 'H2:42 ,O2:21, N2:79'
-    wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
-    # wave = TaylorWave(T0,p0,X0, 'gri30.cti')
+    # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
+    wave = TaylorWave(T0,p0,X0, 'gri30.cti')
     
-    wave.znd(relTol=1e-8,absTol=1e-11)
+    # wave.znd(relTol=1e-8,absTol=1e-11)
     
-    wave.point_history(0.1, 1e-5, dt=5e-5)
-    # states , columns, x = wave.profile(1e-4,1e-3,L=0.3,dt=5e-5)
+    profile_CJ = wave.profile(1e-4,1e-3,L=0.25,dt=1e-6, multiprocessing=True)
+    
+    wave._cj_speed = 2400
+    del wave._postShock_fr_state
+    del wave._postShock_eq_state
+    
+    # point = wave.point_history(0.01, 1e-4, dt=1e-6)
+    profile_overdriven = wave.profile(1e-4,1e-3,L=0.25,dt=1e-6, multiprocessing=True)
+    # states = wave.profile(1e-5,1e-3,L=0.1,dt=1e-6, multiprocessing=True)
     
     # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
     # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
@@ -341,54 +362,54 @@ if __name__ == '__main__':
     # wave.znd_out = znd_out
     
     
-    x0 = 0.7714
-    t0 = 2e-3
+    # x0 = 0.7714
+    # t0 = 2e-3
 
     
-    states, columns, t, u = wave.point_history(x0, t0)
+    # states, columns, t, u = wave.point_history(x0, t0)
     
-    wave.nu = 1.2
+    # wave.nu = 1.2
     
-    states_poly, columns, t_poly, u_poly = wave.point_history(x0, t0)
+    # states_poly, columns, t_poly, u_poly = wave.point_history(x0, t0)
     
-    gas = ct.Solution('Klippenstein_noCarbon.cti')
-    ct_states = ct.SolutionArray(gas)
-    ct_states_poly = ct.SolutionArray(gas)
+    # gas = ct.Solution('Klippenstein_noCarbon.cti')
+    # ct_states = ct.SolutionArray(gas)
+    # ct_states_poly = ct.SolutionArray(gas)
     
-    for state in states:
-        gas.state = state
-        ct_states.append(gas.state)
+    # for state in states:
+    #     gas.state = state
+    #     ct_states.append(gas.state)
     
-    for state_poly in states_poly:
-        gas.state = state_poly
-        ct_states_poly.append(gas.state)
+    # for state_poly in states_poly:
+    #     gas.state = state_poly
+    #     ct_states_poly.append(gas.state)
     
-    plt.figure('P')
-    plt.plot(t,ct_states.P*1e-5, label='isentropic')
-    plt.plot(t_poly,ct_states_poly.P*1e-5, label='polytropic')
-    plt.xlabel('t (s)')
-    plt.ylabel('P (bar)')
-    plt.legend()
+    # plt.figure('P')
+    # plt.plot(t,ct_states.P*1e-5, label='isentropic')
+    # # plt.plot(t_poly,ct_states_poly.P*1e-5, label='polytropic')
+    # plt.xlabel('t (s)')
+    # plt.ylabel('P (bar)')
+    # plt.legend()
     
-    plt.figure('NO')
-    plt.plot(t,ct_states.X[:,gas.species_index('NO')]*1e6, label='isentropic')
-    plt.plot(t_poly,ct_states_poly.X[:,gas.species_index('NO')]*1e6, label='polytropic')
-    plt.xlabel('t (s)')
-    plt.ylabel('NO (ppm)')
-    plt.legend()
+    # plt.figure('NO')
+    # plt.plot(t,ct_states.X[:,gas.species_index('NO')]*1e6, label='isentropic')
+    # # plt.plot(t_poly,ct_states_poly.X[:,gas.species_index('NO')]*1e6, label='polytropic')
+    # plt.xlabel('t (s)')
+    # plt.ylabel('NO (ppm)')
+    # plt.legend()
     
-    plt.figure('u')
-    plt.plot(t,u, label='isentropic')
-    plt.plot(t_poly,u_poly, label='polytropic')
-    plt.xlabel('t (s)')
-    plt.ylabel('u (m/s)')
-    plt.legend()
+    # plt.figure('u')
+    # plt.plot(t,u, label='isentropic')
+    # # plt.plot(t_poly,u_poly, label='polytropic')
+    # plt.xlabel('t (s)')
+    # plt.ylabel('u (m/s)')
+    # plt.legend()
     
-    plt.figure('T')
-    plt.plot(t,ct_states.T, label='isentropic')
-    plt.plot(t_poly,ct_states_poly.T, label='polytropic')
-    plt.xlabel('t (s)')
-    plt.ylabel('T (K)')
-    plt.legend()
+    # plt.figure('T')
+    # plt.plot(t,ct_states.T, label='isentropic')
+    # # plt.plot(t_poly,ct_states_poly.T, label='polytropic')
+    # plt.xlabel('t (s)')
+    # plt.ylabel('T (K)')
+    # plt.legend()
     
 
