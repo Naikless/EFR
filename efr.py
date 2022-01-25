@@ -33,7 +33,7 @@ class Detonation:
         cls.T1,cls.P1,cls.X1,cls.mech,cls.recalc = [cls._DetProperty(value) for value in values]
     
     
-    def __init__(self, T1, P1, q, mech='Klippenstein.cti', recalc=True):
+    def __init__(self, T1, P1, X1, mech='Klippenstein.cti', recalc=True, julia=julia_import):
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self._ct = ct
@@ -42,7 +42,7 @@ class Detonation:
         self._np = np
         self._soundspeed_eq = soundspeed_eq
         #
-        self._set_init_state((T1,P1,q,mech,recalc))
+        self._set_init_state((T1,P1,X1,mech,recalc))
         self._force_recalc()
     
     def _force_recalc(self):
@@ -99,7 +99,7 @@ class Detonation:
         if hasattr(self, '_cj_speed'):
             return self._cj_speed
         else:
-            self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.X1, mech=self.mech)
+            self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.X1, self.mech)
             return self._cj_speed
 
     
@@ -117,7 +117,7 @@ class Detonation:
             gas = self._sdps.PostShock_fr(U1,P1,T1,X1,mech)
             
             print('\nSolving ZND reactor. If this takes long, consider changing relTol and absTol\n')
-            znd_out = self._zndsolve(gas,gas1,U1,self.t_znd, **kwargs)
+            znd_out = self._zndsolve(gas,gas1,U1,t_end=self.t_znd, **kwargs)
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
             return self._znd_out
@@ -126,8 +126,8 @@ class Detonation:
 
 class TaylorWave(Detonation):
     
-    def __init__(self, T1, P1, q, mech='Klippenstein.cti', u0=0, recalc=True):
-        Detonation.__init__(self, T1, P1, q, mech, recalc)
+    def __init__(self, *args, u0=0, **kwargs):
+        Detonation.__init__(self, *args, **kwargs)
         self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
         # self.C_f = 0.0062    # heat transfer coefficient directly from DOI:10.2514/1.10286
