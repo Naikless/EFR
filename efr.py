@@ -18,22 +18,8 @@ import pandas as pd
 
 class Detonation:
     
-    class _DetProperty:
-        def __init__(self, value=None):
-            self.value = value
-        def __get__(self, instance, owner=None):
-            return self.value
-        def __set__(self, instance, value):
-            if value != self.value:
-                self.value = value
-                instance._force_recalc()
-    
-    @classmethod
-    def _set_init_state(cls,values):
-        cls.T1,cls.P1,cls.X1,cls.mech,cls.recalc = [cls._DetProperty(value) for value in values]
-    
-    
     def __init__(self, T1, P1, X1, mech='Klippenstein.cti', recalc=True, julia=julia_import):
+        super().__setattr__('recalc', recalc)
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self._ct = ct
@@ -42,8 +28,14 @@ class Detonation:
         self._np = np
         self._soundspeed_eq = soundspeed_eq
         #
-        self._set_init_state((T1,P1,X1,mech,recalc))
+        self.T1, self.P1, self.X1, self.mech = T1, P1, X1, mech
         self._force_recalc()
+    
+    def __setattr__(self, name, value):
+        old = getattr(self, name, value)
+        super().__setattr__(name, value)
+        if name in {'T1','P1','X1','mech','recalc'} and old != value:
+            self._force_recalc()
     
     def _force_recalc(self):
         if not self.recalc:
@@ -127,7 +119,7 @@ class Detonation:
 class TaylorWave(Detonation):
     
     def __init__(self, *args, u0=0, **kwargs):
-        Detonation.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
         # self.C_f = 0.0062    # heat transfer coefficient directly from DOI:10.2514/1.10286
