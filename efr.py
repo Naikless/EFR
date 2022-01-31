@@ -6,6 +6,13 @@ Created on Sun Nov 24 15:21:11 2019
 @author: hanraths
 """
 
+try:
+    from julia import SDtoolbox as SDT
+    julia_import = True
+except:
+    print('Using Julia solver failed, falling back to scipy.')
+    julia_import = False
+
 import sdtoolbox.postshock as sdps
 from sdtoolbox.znd import zndsolve
 from sdtoolbox.thermo import soundspeed_eq
@@ -16,20 +23,24 @@ from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
 
 class Detonation:
-    
+        
     def __init__(self, T1, P1, X1, mech='Klippenstein.cti', recalc=True, julia=julia_import):
         super().__setattr__('recalc', recalc)
         self.t_znd = 1e-3
         # the following are currently necessary to ensure working multiprocessing
         self._ct = ct
-        self._sdps = sdps
-        self._zndsolve = zndsolve
+        if julia:
+            self._sdps = SDT
+            self._zndsolve = SDT.zndsolve
+        else:
+            self._sdps = sdps
+            self._zndsolve = zndsolve
         self._np = np
         self._soundspeed_eq = soundspeed_eq
         #
         self.T1, self.P1, self.X1, self.mech = T1, P1, X1, mech
         self._force_recalc()
-    
+        
     def __setattr__(self, name, value):
         old = getattr(self, name, value)
         super().__setattr__(name, value)
@@ -311,11 +322,11 @@ class TaylorWave(Detonation):
             
             states_comb = list(self._np.concatenate((states[filter_array],ZND_states_array,states[~(x < x_ZND[-1])])))
             
-            states_comb = pd.DataFrame(states_comb,columns=ZND_states.columns)
+            states_comb = pd.DataFrame(states_comb,columns=ZND_states.columns)         
             states_comb['x'] = x_comb
         
         else:
             states_comb = states_DF
-      
+        
         return states_comb
 
