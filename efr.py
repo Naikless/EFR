@@ -10,7 +10,6 @@ import sdtoolbox.postshock as sdps
 from sdtoolbox.znd import zndsolve
 from sdtoolbox.thermo import soundspeed_eq
 import numpy as np
-import matplotlib.pyplot as plt
 import cantera as ct
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
@@ -215,7 +214,7 @@ class TaylorWave(Detonation):
             # stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
             statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
             
-            statesDF[['t','u']] = t[0],u(x[0],t[0]-dt)
+            statesDF[['x','t','u']] = x[0],t[0],u(x[0],t[0]-dt)
             # return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
             return statesDF
             
@@ -233,6 +232,7 @@ class TaylorWave(Detonation):
             
         # stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
         statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
+        statesDF['x'] = x[1:]
         statesDF['t'] = t[1:]
         statesDF['u'] = [u(x_,t_-dt) for x_,t_ in zip(x[1:],t[1:])]
         
@@ -290,7 +290,7 @@ class TaylorWave(Detonation):
 
         # combine DFR and ZND data, if detonation is still inside tube
         if not all(states_DF['T'] > 1.01*self.T1) and insertZND: #TODO! does not work for overdriven
-            states = states_DF.to_numpy()
+            states = states_DF.drop(columns='x').to_numpy()
             x_front = x[states[:,0] == states[-1,0]][0]
             x_ZND = x_front-self.znd()['distance'][::-1]
             filter_array = x < x_ZND[0]
@@ -312,96 +312,10 @@ class TaylorWave(Detonation):
             states_comb = list(self._np.concatenate((states[filter_array],ZND_states_array,states[~(x < x_ZND[-1])])))
             
             states_comb = pd.DataFrame(states_comb,columns=ZND_states.columns)
+            states_comb['x'] = x_comb
         
         else:
             states_comb = states_DF
-            x_comb = x
       
-        states_comb['x'] = x_comb
-        
         return states_comb
-
-
-#%%
-
-if __name__ == '__main__': 
-       
-    
-    T0 = 295
-    p0 = 1e5
-    X0 = 'H2:42 ,O2:21, N2:79'
-    # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
-    wave = TaylorWave(T0,p0,X0, 'gri30.cti')
-    
-    # wave.znd(relTol=1e-8,absTol=1e-11)
-    
-    profile_CJ = wave.profile(1e-4,1e-3,L=0.25,dt=1e-6, multiprocessing=True)
-    
-    wave._cj_speed = 2400
-    del wave._postShock_fr_state
-    del wave._postShock_eq_state
-    
-    # point = wave.point_history(0.01, 1e-4, dt=1e-6)
-    profile_overdriven = wave.profile(1e-4,1e-3,L=0.25,dt=1e-6, multiprocessing=True)
-    # states = wave.profile(1e-5,1e-3,L=0.1,dt=1e-6, multiprocessing=True)
-    
-    # det = Detonation(T0,p0,X0, 'Klippenstein_noCarbon.cti')
-    # flame = det.postFlame(det.postShock_fr(0.8*det.CJspeed))
-    # psr = det.postPSR(det.postShock_fr(0.8*det.CJspeed))
-    
-    # znd_out = wave.znd_out
-    # wave = TaylorWave(T0,p0,X0, 'Klippenstein_noCarbon.cti')
-    # wave.znd_out = znd_out
-    
-    
-    # x0 = 0.7714
-    # t0 = 2e-3
-
-    
-    # states, columns, t, u = wave.point_history(x0, t0)
-    
-    # wave.nu = 1.2
-    
-    # states_poly, columns, t_poly, u_poly = wave.point_history(x0, t0)
-    
-    # gas = ct.Solution('Klippenstein_noCarbon.cti')
-    # ct_states = ct.SolutionArray(gas)
-    # ct_states_poly = ct.SolutionArray(gas)
-    
-    # for state in states:
-    #     gas.state = state
-    #     ct_states.append(gas.state)
-    
-    # for state_poly in states_poly:
-    #     gas.state = state_poly
-    #     ct_states_poly.append(gas.state)
-    
-    # plt.figure('P')
-    # plt.plot(t,ct_states.P*1e-5, label='isentropic')
-    # # plt.plot(t_poly,ct_states_poly.P*1e-5, label='polytropic')
-    # plt.xlabel('t (s)')
-    # plt.ylabel('P (bar)')
-    # plt.legend()
-    
-    # plt.figure('NO')
-    # plt.plot(t,ct_states.X[:,gas.species_index('NO')]*1e6, label='isentropic')
-    # # plt.plot(t_poly,ct_states_poly.X[:,gas.species_index('NO')]*1e6, label='polytropic')
-    # plt.xlabel('t (s)')
-    # plt.ylabel('NO (ppm)')
-    # plt.legend()
-    
-    # plt.figure('u')
-    # plt.plot(t,u, label='isentropic')
-    # # plt.plot(t_poly,u_poly, label='polytropic')
-    # plt.xlabel('t (s)')
-    # plt.ylabel('u (m/s)')
-    # plt.legend()
-    
-    # plt.figure('T')
-    # plt.plot(t,ct_states.T, label='isentropic')
-    # # plt.plot(t_poly,ct_states_poly.T, label='polytropic')
-    # plt.xlabel('t (s)')
-    # plt.ylabel('T (K)')
-    # plt.legend()
-    
 
