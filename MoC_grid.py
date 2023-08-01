@@ -43,6 +43,7 @@ def solve_new_point(x,t,U,C,S, tol=1e-5):
         
         while 1:
             U4 = (x4-x1)/(x2-x1) * U1 +  (x2-x4)/(x2-x1) * U2
+            C4 = (x4-x1)/(x2-x1) * C1 +  (x2-x4)/(x2-x1) * C2
             S4 = (x4-x1)/(x2-x1) * S1 +  (x2-x4)/(x2-x1) * S2
             
             if U4 == 0:
