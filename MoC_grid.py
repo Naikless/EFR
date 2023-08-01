@@ -103,11 +103,6 @@ def solve_new_point(x,t,U,C,S, tol=1e-5):
     
     return x3,t3,U3,C3,S3,x4,t4,U4,C4,S4
     
-    
-
-
-
-
 
 
 def initial_grid_det(ds,t0):
@@ -172,9 +167,9 @@ def initial_grid_det(ds,t0):
         x.append(x[-1]+dx)
         t.append(t[-1]+dt)
         
-        p_ = P(x[-1],t[-1]*a2_eq)
-        u_ = phi(x[-1],t[-1]*a2_eq) * CJspeed
-        c_ = eta(x[-1],t[-1]*a2_eq) * CJspeed
+        p_ = P(x[-1],t[-1]/a2_eq)
+        u_ = phi(x[-1],t[-1]/a2_eq) * CJspeed
+        c_ = eta(x[-1],t[-1]/a2_eq) * CJspeed
         s_ = s_CJ - ct.gas_constant * (np.log(p_/P2) + 2*gamma_eq/(gamma_eq-1)*np.log(c_/a2_eq))
         U.append(u_/a2_eq)
         C.append(c_/a2_eq)
@@ -183,67 +178,4 @@ def initial_grid_det(ds,t0):
     return x,t,U,C,S
     
     
-    
-    
-#%% test case Sod shock tube
-
-gamma_eq = 1.2
-beta = 1.85/30e-3
-cf = 0.0063
-C0 = 0.5
-
-x_0 = np.linspace(0,1,50)
-
-x = [x_0]
-t = [np.zeros_like(x_0)]
-
-rho = np.where(x_0 < 0.5, 1.0, 0.125)
-U = [np.ones_like(x_0)*0]
-p = np.where(x_0 < 0.5, 1.0, 0.1)
-C = [(gamma_eq * p/rho)**0.5]
-S = [np.zeros_like(x_0)]
-
-plt.figure(1)
-plt.cla()
-
-plt.scatter(x[-1], t[-1])
-
-while max(t[-1]) < 0.2:
-    
-    S_new = []; U_new = []; C_new = []; x_new = []; t_new = []
-    x_ = x[-1]; t_ = t[-1]; U_ = U[-1]; C_ = C[-1]; S_ = S[-1]
-    
-    for i in range(len(x_)-1):
-        
-        x3,t3,U3,C3,S3,x4,t4,U4,C4,S4 = solve_new_point(x_[i:i+2],t_[i:i+2],U_[i:i+2],C_[i:i+2],S_[i:i+2],tol=1e-8)
-        
-        x_new.append(x3)
-        t_new.append(t3)
-        U_new.append(U3)
-        C_new.append(C3)
-        S_new.append(S3)
-    
-    x_new = [0, *x_new, 1]
-    t_new = [t_new[0], *t_new, t_new[-1]]
-    U_new = [0, *U_new, 0]
-    C_new = [C_new[0], *C_new, C_new[-1]]
-    S_new = [S_new[0], *S_new, S_new[-1]]
-    
-    plt.scatter(x_new, t_new)
-    plt.pause(0.5)
-    
-    t.append(np.array(t_new))
-    x.append(np.array(x_new))
-    U.append(np.array(U_new))
-    C.append(np.array(C_new))
-    S.append(np.array(S_new))
-    
-    print(max(t[-1]))
-    
-
-
-plt.scatter(x[0], t[0])
-plt.scatter(x[-1], t[-1])    
-   
-        
-        
+x,t,U,C,S = initial_grid_det(1e-2,0.1)   
