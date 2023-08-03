@@ -8,6 +8,47 @@ Created on Sat Jul 29 19:39:58 2023
 import matplotlib.pyplot as plt
 import numpy as np
 import cantera as ct
+from collections import namedtuple
+
+from efr import TaylorWave
+
+T1 = 293.15
+P1 = ct.one_atm
+X1 = 'H2:42,O2:21,N2:79'
+mech = 'Klippenstein_noCarbon.cti'
+det = TaylorWave(T1, P1, X1, mech)
+
+CJspeed = det.CJspeed
+a2_eq = det.a2_eq
+u2 = CJspeed - a2_eq  #CJspeed-a2_eq
+T2 = det.postShock_eq.T
+P2 = det.postShock_eq.P
+gamma_eq = det.gamma_eq
+u0 = 0
+s_CJ = det.postShock_eq.entropy_mass
+
+beta = 1.85/30e-3
+cf = 0#0.0063
+C0 = (1.4 * ct.gas_constant /28.87 * 293)**0.5 / a2_eq # normalized speed of sound at wall temperature
+
+U_CJ = u2/a2_eq
+C_CJ = 1
+S_CJ = s_CJ/gamma_eq/ct.gas_constant
+
+Point = namedtuple('Point', (field for field in 'xtUCS'))
+
+def plot_point(x,t,U,C,S,radius=0.05):
+    plt.scatter(x,t)
+    
+    x_Cplus = np.linspace(0, radius * (1-1/(1+(U+C)**2))**0.5, 10)
+    plt.plot(x+x_Cplus, t + x_Cplus / (U+C), 'k--')
+    
+    x_Cminus = np.linspace(0, radius * (1-1/(1+(U-C)**2))**0.5, 10)
+    plt.plot(x-x_Cminus, t + x_Cminus / (U-C), 'k-.')
+    
+    x_U = np.linspace(0, radius * (1-1/(1+(U)**2))**0.5, 10)
+    plt.plot(x-x_U, t - x_U / (U), 'k:')
+
 
 def solve_new_point(x,t,U,C,S, tol=1e-5):
     x1,x2 = x
@@ -108,17 +149,6 @@ def solve_new_point(x,t,U,C,S, tol=1e-5):
 
 def initial_grid_det(ds,t0):
     
-    CJspeed = 1969
-    P1 = 1e5
-    a2_eq = 1050
-    T1 = 293.15
-    u2 = CJspeed -a2_eq  #CJspeed-a2_eq
-    T2 = 2950
-    P2 = 16e5
-    gamma_eq = 1.2
-    u0 = 0
-    s_CJ = 1e5
-    
     def phi(x,t): 
         return 2/(gamma_eq+1)*(x/t/CJspeed-1) + u2/CJspeed
 
@@ -147,10 +177,6 @@ def initial_grid_det(ds,t0):
         else:
             return P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*gamma_eq/(gamma_eq-1))
     
-    U_CJ = u2/a2_eq
-    C_CJ = 1
-    S_CJ = s_CJ/gamma_eq/ct.gas_constant
-    
     t = [t0]
     x = [CJspeed/a2_eq * t0]
     U = [U_CJ]
@@ -159,7 +185,7 @@ def initial_grid_det(ds,t0):
     
     
     while 1:
-        dt = ds#(ds**2 / (1+(U[-1]-C[-1])**2))**0.5
+        dt = (ds**2 / (1+(U[-1]-C[-1])**2))**0.5
         dx = (U[-1]-C[-1]) * dt
         
         if x[-1] + dx < 0:
@@ -177,6 +203,42 @@ def initial_grid_det(ds,t0):
         S.append(s_/gamma_eq/ct.gas_constant)
     
     return x,t,U,C,S
+
+
+#%% inititial grid from isentropic solution
+plt.cla()
+plt.ylim([0,7])
+plt.plot(np.linspace(0,1,100),np.linspace(0,1,100)/CJspeed*a2_eq,'k--')
+x,t,U,C,S = initial_grid_det(5e-3,0.01)
+plt.scatter(x,t)
+
+#%%
+def add_new_Cminus(x,t,U,C,S,ds):
+    dt = (ds**2 / (1+(CJspeed/a2_eq)**2))**0.5
+    t_ = [t[0] + dt]
+    x_ = [CJspeed/a2_eq * t_[0]]
+    U_ = [U_CJ]
+    C_ = [C_CJ]
+    S_ = [S_CJ]
     
     
-x,t,U,C,S = initial_grid_det(1e-2,0.1)   
+    for i in range(1,len(x)):
+        plt.scatter(x_[-1],t_[-1])
+        x3,t3,U3,C3,S3,x4,t4,U4,C4,S4 = solve_new_point([x[i],x_[-1]],[t[i],t_[-1]],[U[i],U_[-1]],[C[i],C_[-1]],[S[i],S_[-1]],tol=1e-3)
+        if x3 < 0:
+            dt =  x[-1] / (U[-1]-C[-1])
+            x_.append(0)
+            t_.append(t_[-1] + dt)
+            U_.append(u0/a2_eq)
+            C_.append(1/CJspeed -(gamma_eq-1)/(gamma_eq+1)/a2_eq)
+            S_.append(S_CJ)
+            break
+        x_.append(x3)
+        t_.append(t3)
+        U_.append(U3)
+        C_.append(C3)
+        S_.append(S3)
+        
+    return x_,t_,U_,C_,S_
+ds = 0.2      
+x,t,U,C,S = add_new_Cminus(x,t,U,C,S,ds)       
