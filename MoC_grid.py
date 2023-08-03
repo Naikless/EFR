@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import cantera as ct
 from collections import namedtuple
+from scipy.interpolate import griddata
 
 from efr import TaylorWave
 
@@ -26,6 +27,7 @@ P2 = det.postShock_eq.P
 gamma_eq = det.gamma_eq
 u0 = 0
 s_CJ = det.postShock_eq.entropy_mass
+R = ct.gas_constant/det.postShock_eq.mean_molecular_weight
 
 beta = 1.85/30e-3
 cf = 0#0.0063
@@ -39,15 +41,14 @@ Point = namedtuple('Point', (field for field in 'xtUCS'))
 
 def plot_point(x,t,U,C,S,radius=0.05):
     plt.scatter(x,t)
+    t_Cplus = np.linspace(0, radius / ((1+(U+C)**2))**0.5, 10)
+    plt.plot(x + (U+C) * t_Cplus, t + t_Cplus, 'k--')
     
-    x_Cplus = np.linspace(0, radius * (1-1/(1+(U+C)**2))**0.5, 10)
-    plt.plot(x+x_Cplus, t + x_Cplus / (U+C), 'k--')
+    t_Cminus = np.linspace(0, radius / ((1+(U-C)**2))**0.5, 10)
+    plt.plot(x + (U-C) * t_Cminus, t + t_Cminus, 'k-.')
     
-    x_Cminus = np.linspace(0, radius * (1-1/(1+(U-C)**2))**0.5, 10)
-    plt.plot(x-x_Cminus, t + x_Cminus / (U-C), 'k-.')
-    
-    x_U = np.linspace(0, radius * (1-1/(1+(U)**2))**0.5, 10)
-    plt.plot(x-x_U, t - x_U / (U), 'k:')
+    t_U = np.linspace(0, radius / ((1+(U)**2))**0.5, 10)
+    plt.plot(x + U * t_U, t + t_U, 'k:')
 
 
 def solve_new_point(x,t,U,C,S, tol=1e-5):
@@ -147,7 +148,7 @@ def solve_new_point(x,t,U,C,S, tol=1e-5):
     
 
 
-def initial_grid_det(ds,t0):
+def initial_grid_det(ds_inner,ds_outer,t0):
     
     def phi(x,t): 
         return 2/(gamma_eq+1)*(x/t/CJspeed-1) + u2/CJspeed
@@ -160,6 +161,12 @@ def initial_grid_det(ds,t0):
             return u0 
         else:
             return np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + u0
+    
+    def c(x,t):
+        if x/t <= CJspeed - u2 * (gamma_eq+1)/2:
+            return eta(CJspeed - u2 * (gamma_eq+1)/2,1) * CJspeed
+        else:
+            return eta(x,t) * CJspeed
     
     def T(x,t):
         if x/t > CJspeed:
@@ -185,6 +192,10 @@ def initial_grid_det(ds,t0):
     
     
     while 1:
+        if U[-1] > 0:
+            ds = ds_inner
+        else:
+            ds = ds_outer
         dt = (ds**2 / (1+(U[-1]-C[-1])**2))**0.5
         dx = (U[-1]-C[-1]) * dt
         
@@ -195,22 +206,15 @@ def initial_grid_det(ds,t0):
         t.append(t[-1]+dt)
         
         p_ = P(x[-1],t[-1]/a2_eq)
-        u_ = phi(x[-1],t[-1]/a2_eq) * CJspeed
-        c_ = eta(x[-1],t[-1]/a2_eq) * CJspeed
-        s_ = s_CJ - ct.gas_constant * (np.log(p_/P2) + 2*gamma_eq/(gamma_eq-1)*np.log(c_/a2_eq))
+        u_ = u(x[-1],t[-1]/a2_eq)
+        c_ = c(x[-1],t[-1]/a2_eq)
+        s_ = s_CJ - R * (np.log(p_/P2) + 2*gamma_eq/(gamma_eq-1)*np.log(a2_eq/c_))
         U.append(u_/a2_eq)
         C.append(c_/a2_eq)
         S.append(s_/gamma_eq/ct.gas_constant)
     
     return x,t,U,C,S
 
-
-#%% inititial grid from isentropic solution
-plt.cla()
-plt.ylim([0,7])
-plt.plot(np.linspace(0,1,100),np.linspace(0,1,100)/CJspeed*a2_eq,'k--')
-x,t,U,C,S = initial_grid_det(5e-3,0.01)
-plt.scatter(x,t)
 
 #%%
 def add_new_Cminus(x,t,U,C,S,ds):
@@ -223,7 +227,7 @@ def add_new_Cminus(x,t,U,C,S,ds):
     
     
     for i in range(1,len(x)):
-        plt.scatter(x_[-1],t_[-1])
+        # plt.scatter(x_[-1],t_[-1])
         x3,t3,U3,C3,S3,x4,t4,U4,C4,S4 = solve_new_point([x[i],x_[-1]],[t[i],t_[-1]],[U[i],U_[-1]],[C[i],C_[-1]],[S[i],S_[-1]],tol=1e-3)
         if x3 < 0:
             dt =  x[-1] / (U[-1]-C[-1])
@@ -238,7 +242,48 @@ def add_new_Cminus(x,t,U,C,S,ds):
         U_.append(U3)
         C_.append(C3)
         S_.append(S3)
-        
+    # plt.scatter(x_[-1],t_[-1])    
     return x_,t_,U_,C_,S_
-ds = 0.2      
-x,t,U,C,S = add_new_Cminus(x,t,U,C,S,ds)       
+
+#%% inititial grid from isentropic solution
+plt.cla()
+# plt.ylim([0,0.1])
+# plt.xlim([0,0.1])
+# plt.plot(np.linspace(0,1,100),np.linspace(0,1,100)/CJspeed*a2_eq,'k--')
+x,t,U,C,S = initial_grid_det(5e-6,1e-4,1e-4)
+plt.scatter(x,t)
+
+#%%     
+ds = 1e-2
+
+x = [x]
+t = [t]
+U = [U]
+C = [C]
+S = [S]
+
+while np.max(x[-1]) <= 1:
+    x_,t_,U_,C_,S_ = add_new_Cminus(x[-1],t[-1],U[-1],C[-1],S[-1],ds)
+    x.append(x_)
+    t.append(t_)
+    U.append(U_)
+    C.append(C_)
+    S.append(S_)
+    print(f'x_max = {np.max(x[-1])}')
+
+
+#%% transform coordinates
+tmax = np.max(t[-1])
+tau = (np.array(t).flatten() - np.array(x).flatten()/CJspeed*a2_eq) / (tmax - np.array(x).flatten()/CJspeed*a2_eq)
+
+
+#%% interpolate results
+x_eq, tau_eq = np.meshgrid(np.linspace(0, 1,100),np.linspace(0, 1, 100))
+
+# U_int = griddata((np.array(x).flatten(), tau), np.array(U).flatten(), (x_eq,tau_eq))
+U_int = griddata((np.array(x).flatten(), np.array(t).flatten()), np.array(U).flatten(), (x_eq,tau_eq))
+
+S_int = griddata((np.array(x).flatten(), tau), np.array(S).flatten(), (x_eq,tau_eq))
+
+
+
