@@ -35,28 +35,37 @@ C0 = (1.4 * ct.gas_constant /28.87 * 293)**0.5 / a2_eq # normalized speed of sou
 
 U_CJ = u2/a2_eq
 C_CJ = 1
-S_CJ = s_CJ/gamma_eq/ct.gas_constant
+S_CJ = s_CJ/gamma_eq/R
+C_end = 1/CJspeed -(gamma_eq-1)/(gamma_eq+1)/a2_eq
 
-Point = namedtuple('Point', (field for field in 'xtUCS'))
+Point = namedtuple('Point', (field for field in 'xtUCS'),defaults=(0,0,0))
 
-def plot_point(x,t,U,C,S,radius=0.05):
-    plt.scatter(x,t)
-    t_Cplus = np.linspace(0, radius / ((1+(U+C)**2))**0.5, 10)
-    plt.plot(x + (U+C) * t_Cplus, t + t_Cplus, 'k--')
+class PointList(list):
+    def __init__(self,*args,**kwargs):
+        list.__init__(self,*args, **kwargs)
     
-    t_Cminus = np.linspace(0, radius / ((1+(U-C)**2))**0.5, 10)
-    plt.plot(x + (U-C) * t_Cminus, t + t_Cminus, 'k-.')
+    def __getattribute__(self, name):
+        try:
+            return list.__getattribute__(self,name)
+        except AttributeError:
+            return [p.__getattribute__(name) for p in self]
+        
+
+def plot_point(p,radius=0.05):
+    plt.scatter(p.x,p.t)
+    t_Cplus = np.linspace(0, radius / ((1+(p.U+p.C)**2))**0.5, 10)
+    plt.plot(p.x + (p.U+p.C) * t_Cplus, p.t + t_Cplus, 'k--')
     
-    t_U = np.linspace(0, radius / ((1+(U)**2))**0.5, 10)
-    plt.plot(x + U * t_U, t + t_U, 'k:')
+    t_Cminus = np.linspace(0, radius / ((1+(p.U-p.C)**2))**0.5, 10)
+    plt.plot(p.x + (p.U-p.C) * t_Cminus, p.t + t_Cminus, 'k-.')
+    
+    t_U = np.linspace(0, radius / ((1+(p.U)**2))**0.5, 10)
+    plt.plot(p.x + p.U * t_U, p.t + t_U, 'k:')
 
 
-def solve_new_point(x,t,U,C,S, tol=1e-5):
-    x1,x2 = x
-    t1,t2 = t
-    U1,U2 = U
-    C1,C2 = C
-    S1,S2 = S
+def solve_new_point(p1,p2, tol=1e-5):
+    x1,t1,U1,C1,S1 = p1
+    x2,t2,U2,C2,S2 = p2
     
     t3 = (x1-x2 + t2*(U2-C2)-t1*(U1+C1)) / (U2-C2-U1-C1)
     x3 = (U1+C1) * (t3-t1) + x1
@@ -144,7 +153,7 @@ def solve_new_point(x,t,U,C,S, tol=1e-5):
         else:
             x3 = x3_; t3 = t3_
     
-    return x3,t3,U3,C3,S3,x4,t4,U4,C4,S4
+    return Point(x3,t3,U3,C3,S3), Point(x4,t4,U4,C4,S4)
     
 
 
@@ -184,106 +193,125 @@ def initial_grid_det(ds_inner,ds_outer,t0):
         else:
             return P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*gamma_eq/(gamma_eq-1))
     
-    t = [t0]
-    x = [CJspeed/a2_eq * t0]
-    U = [U_CJ]
-    C = [C_CJ]
-    S = [S_CJ]
     
+    p0 = Point(CJspeed/a2_eq * t0, t0, U_CJ, C_CJ, S_CJ)
+    pl = PointList([p0])
     
     while 1:
-        if U[-1] > 0:
+        p_old = pl[-1]
+        if p_old.U > 0:
             ds = ds_inner
         else:
             ds = ds_outer
-        dt = (ds**2 / (1+(U[-1]-C[-1])**2))**0.5
-        dx = (U[-1]-C[-1]) * dt
+        dt = (ds**2 / (1+(p_old.U-p_old.C)**2))**0.5
+        dx = (p_old.U-p_old.C) * dt
         
-        if x[-1] + dx < 0:
+        if p_old.x + dx < 0:
             break
         
-        x.append(x[-1]+dx)
-        t.append(t[-1]+dt)
+        x_new = p_old.x+dx
+        t_new = p_old.t+dt
         
-        p_ = P(x[-1],t[-1]/a2_eq)
-        u_ = u(x[-1],t[-1]/a2_eq)
-        c_ = c(x[-1],t[-1]/a2_eq)
+        p_ = P(x_new,t_new/a2_eq)
+        u_ = u(x_new,t_new/a2_eq)
+        c_ = c(x_new,t_new/a2_eq)
         s_ = s_CJ - R * (np.log(p_/P2) + 2*gamma_eq/(gamma_eq-1)*np.log(a2_eq/c_))
-        U.append(u_/a2_eq)
-        C.append(c_/a2_eq)
-        S.append(s_/gamma_eq/ct.gas_constant)
+        
+        p_new = Point(x_new, t_new, u_/a2_eq, c_/a2_eq, s_/gamma_eq/R )
+        
+        pl.append(p_new)
+
     
-    return x,t,U,C,S
+    return pl
 
 
 #%%
-def add_new_Cminus(x,t,U,C,S,ds):
+def add_new_Cminus(plist,ds,**kwargs):
+    
     dt = (ds**2 / (1+(CJspeed/a2_eq)**2))**0.5
-    t_ = [t[0] + dt]
-    x_ = [CJspeed/a2_eq * t_[0]]
-    U_ = [U_CJ]
-    C_ = [C_CJ]
-    S_ = [S_CJ]
+    
+    p_new = Point(CJspeed/a2_eq * (plist[0].t + dt), plist[0].t + dt, U_CJ, C_CJ, S_CJ)
+    # t_ = [t[0] + dt]
+    # x_ = [CJspeed/a2_eq * t_[0]]
+    # U_ = [U_CJ]
+    # C_ = [C_CJ]
+    # S_ = [S_CJ]
+    
+    plist_new = PointList([p_new])
     
     
-    for i in range(1,len(x)):
+    
+    
+    for p_old in plist[1:]:
         # plt.scatter(x_[-1],t_[-1])
-        x3,t3,U3,C3,S3,x4,t4,U4,C4,S4 = solve_new_point([x[i],x_[-1]],[t[i],t_[-1]],[U[i],U_[-1]],[C[i],C_[-1]],[S[i],S_[-1]],tol=1e-3)
-        if x3 < 0:
-            dt =  x[-1] / (U[-1]-C[-1])
-            x_.append(0)
-            t_.append(t_[-1] + dt)
-            U_.append(u0/a2_eq)
-            C_.append(1/CJspeed -(gamma_eq-1)/(gamma_eq+1)/a2_eq)
-            S_.append(S_CJ)
+        p_new_cand,p4 = solve_new_point(p_old, p_new,**kwargs)
+        if p_new_cand.x < 0:
+            dt =  p_old.x / (p_old.U - p_old.C)
+            p_new = Point(0, p_new.t + dt, u0/a2_eq, C_end, S_CJ)
+            # x_.append(0)
+            # t_.append(t_[-1] + dt)
+            # U_.append(u0/a2_eq)
+            # C_.append(1/CJspeed -(gamma_eq-1)/(gamma_eq+1)/a2_eq)
+            # S_.append(S_CJ)
+            pl_new.append(p_new)
             break
-        x_.append(x3)
-        t_.append(t3)
-        U_.append(U3)
-        C_.append(C3)
-        S_.append(S3)
+        p_new = p_new_cand
+        plist_new.append(p_new)
+        # x_.append(x3)
+        # t_.append(t3)
+        # U_.append(U3)
+        # C_.append(C3)
+        # S_.append(S3)
     # plt.scatter(x_[-1],t_[-1])    
-    return x_,t_,U_,C_,S_
+    return plist_new
 
 #%% inititial grid from isentropic solution
 plt.cla()
 # plt.ylim([0,0.1])
 # plt.xlim([0,0.1])
 # plt.plot(np.linspace(0,1,100),np.linspace(0,1,100)/CJspeed*a2_eq,'k--')
-x,t,U,C,S = initial_grid_det(5e-6,1e-4,1e-4)
-plt.scatter(x,t)
+pl = initial_grid_det(4e-5,5e-4,0.001)
+plt.scatter(pl.x,pl.t)
 
 #%%     
-ds = 1e-2
+ds = 5e-4
 
-x = [x]
-t = [t]
-U = [U]
-C = [C]
-S = [S]
+# x = [x]
+# t = [t]
+# U = [U]
+# C = [C]
+# S = [S]
+points = PointList([pl])
 
-while np.max(x[-1]) <= 1:
-    x_,t_,U_,C_,S_ = add_new_Cminus(x[-1],t[-1],U[-1],C[-1],S[-1],ds)
-    x.append(x_)
-    t.append(t_)
-    U.append(U_)
-    C.append(C_)
-    S.append(S_)
-    print(f'x_max = {np.max(x[-1])}')
+while np.max(points.x) <= 1:
+    pl_new = add_new_Cminus(points[-1],ds)
+    points.append(pl_new)
+    # t.append(t_)
+    # U.append(U_)
+    # C.append(C_)
+    # S.append(S_)
+    print(f'x_max = {np.max(points.x)}')
 
 
 #%% transform coordinates
-tmax = np.max(t[-1])
-tau = (np.array(t).flatten() - np.array(x).flatten()/CJspeed*a2_eq) / (tmax - np.array(x).flatten()/CJspeed*a2_eq)
+tmax = np.max(points.t)
+xvec = np.array(points.x).flatten()
+tvec = np.array(points.t).flatten()
+Uvec = np.array(points.U).flatten()
+Cvec = np.array(points.C).flatten()
+Svec = np.array(points.S).flatten()
+
+tau = (tvec - xvec/CJspeed*a2_eq) / (tmax - xvec/CJspeed*a2_eq)
 
 
 #%% interpolate results
 x_eq, tau_eq = np.meshgrid(np.linspace(0, 1,100),np.linspace(0, 1, 100))
 
-# U_int = griddata((np.array(x).flatten(), tau), np.array(U).flatten(), (x_eq,tau_eq))
-U_int = griddata((np.array(x).flatten(), np.array(t).flatten()), np.array(U).flatten(), (x_eq,tau_eq))
+U_int = griddata((xvec, tau), Uvec, (x_eq,tau_eq))
+# U_int = griddata((xvec, np.array(t).flatten()), np.array(U).flatten(), (x_eq,tau_eq))
 
-S_int = griddata((np.array(x).flatten(), tau), np.array(S).flatten(), (x_eq,tau_eq))
+S_int = griddata((xvec, tvec), Svec, (x_eq,tau_eq))
+# S_int = griddata((xvec, tau), Svec, (x_eq,tau_eq))
 
 
 
