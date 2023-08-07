@@ -125,13 +125,13 @@ def solve_new_point(p1,p2, tol=1e-5):
               )
          
         R_plus3 = (R_plus1 - beta * 2 *cf *abs(U13) /C13
-                   * (C13**2 - (gamma_eq-1/2) * U13**2 - C0**2 - U13*C13)
+                   * (C13**2 - (gamma_eq-1)/2 * U13**2 - C0**2 - U13*C13)
                    * (t3-t1)
                    + C13 * (S3-S1)
                    )
         
         R_minus3 = (R_minus2 - beta * 2 *cf *abs(U23) /C23
-                   * (C23**2 - (gamma_eq-1/2) * U23**2 - C0**2 - U23*C23)
+                   * (C23**2 - (gamma_eq-1)/2 * U23**2 - C0**2 - U23*C23)
                    * (t3-t2)
                    + C23 * (S3-S2)
                    )
@@ -231,11 +231,6 @@ def add_new_Cminus(plist,ds,**kwargs):
     dt = (ds**2 / (1+(CJspeed/a2_eq)**2))**0.5
     
     p_new = Point(CJspeed/a2_eq * (plist[0].t + dt), plist[0].t + dt, U_CJ, C_CJ, S_CJ)
-    # t_ = [t[0] + dt]
-    # x_ = [CJspeed/a2_eq * t_[0]]
-    # U_ = [U_CJ]
-    # C_ = [C_CJ]
-    # S_ = [S_CJ]
     
     plist_new = PointList([p_new])
     
@@ -248,20 +243,11 @@ def add_new_Cminus(plist,ds,**kwargs):
         if p_new_cand.x < 0:
             dt =  p_old.x / (p_old.U - p_old.C)
             p_new = Point(0, p_new.t + dt, u0/a2_eq, C_end, S_CJ)
-            # x_.append(0)
-            # t_.append(t_[-1] + dt)
-            # U_.append(u0/a2_eq)
-            # C_.append(1/CJspeed -(gamma_eq-1)/(gamma_eq+1)/a2_eq)
-            # S_.append(S_CJ)
             pl_new.append(p_new)
             break
         p_new = p_new_cand
         plist_new.append(p_new)
-        # x_.append(x3)
-        # t_.append(t3)
-        # U_.append(U3)
-        # C_.append(C3)
-        # S_.append(S3)
+        
     # plt.scatter(x_[-1],t_[-1])    
     return plist_new
 
@@ -276,20 +262,11 @@ plt.scatter(pl.x,pl.t)
 #%%     
 ds = 5e-4
 
-# x = [x]
-# t = [t]
-# U = [U]
-# C = [C]
-# S = [S]
 points = PointList([pl])
 
 while np.max(points.x) <= 1:
     pl_new = add_new_Cminus(points[-1],ds)
     points.append(pl_new)
-    # t.append(t_)
-    # U.append(U_)
-    # C.append(C_)
-    # S.append(S_)
     print(f'x_max = {np.max(points.x)}')
 
 
