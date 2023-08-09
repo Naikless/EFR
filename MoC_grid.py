@@ -44,11 +44,8 @@ class PointList(list):
     def __init__(self,*args,**kwargs):
         list.__init__(self,*args, **kwargs)
     
-    def __getattribute__(self, name):
-        try:
-            return list.__getattribute__(self,name)
-        except AttributeError:
-            return [p.__getattribute__(name) for p in self]
+    def __getattr__(self, name):
+        return [getattr(p,name) for p in self]
         
 
 def plot_point(p,radius=0.05):
