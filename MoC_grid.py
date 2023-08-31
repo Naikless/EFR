@@ -31,10 +31,11 @@ s_CJ = det.postShock_eq.entropy_mass
 R = ct.gas_constant/det.postShock_eq.mean_molecular_weight
 
 beta = 1.85/30e-3
-cf = 0.0146#0.0146#0.0063
+cf = 0.0063#0.0063#0.0146#0.0146#0.0063
 
 T_w = 293
-p_out = 1e5
+P_out = 1e5
+P_crit = P_out/(2/(gamma_eq+1))**(gamma_eq/(gamma_eq-1))
 gas = det.postShock_eq
 gas.TP = T_w,gas.P
 gamma = sdt.thermo.soundspeed_eq(gas)**2/gas.P*gas.density
@@ -57,8 +58,8 @@ class PointList(list):
         return [getattr(p,name) for p in self]
         
 
-def plot_point(p,radius=5e-4):
-    plt.scatter(p.x,p.t)
+def plot_point(p,radius=5e-4,**kwargs):
+    plt.scatter(p.x,p.t,**kwargs)
     t_Cplus = np.linspace(0, radius / ((1+(p.U+p.C)**2))**0.5, 10)
     plt.plot(p.x + (p.U+p.C) * t_Cplus, p.t + t_Cplus, 'k--')
     
@@ -276,7 +277,7 @@ def add_zero_point(p, tol=1e-5):
 def add_end_point(p1, p2, tol=1e-5):
     x1,t1,U1,C1,S1 = p1
     x2,t2,U2,C2,S2 = p2
-            
+              
     x3 = 1
     t3 = (x3 - x1) / (U1 + C1) + t1
     
@@ -345,7 +346,7 @@ def add_end_point(p1, p2, tol=1e-5):
         
         # U3 = (R_plus3 - R_minus3)/2
         # C3 = (R_plus3 + R_minus3)/4 * (gamma_eq-1)
-        U3 = C3 = R_plus1/(2/(gamma_eq-1) + 1)
+        U3 = C3 = R_plus3/(2/(gamma_eq-1) + 1)
         
         U13 = (U1+U3)/2
         # U23 = (U2+U3)/2
@@ -356,6 +357,12 @@ def add_end_point(p1, p2, tol=1e-5):
         # t3_ = (x1-x2 + t2*(U23-C23)-t1*(U13+C13)) / (U23-C23-U13-C13)
         t3_ = (x3 - x1) / (U1 + C1) + t1
         
+        
+        P = P2 * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
+        if P < P_crit:
+            print('not choked!')
+        
+        
         if abs(t3_ - t3) < tol:
             break
         else:
@@ -363,6 +370,7 @@ def add_end_point(p1, p2, tol=1e-5):
                 raise Exception("Couldn't converge to new grid point, maybe reduce tmax.")
             t3 = t3_
             n += 1
+        
     
     return Point(x3,t3,U3,C3,S3), Point(x4,t4,U4,C4,S4)
     
@@ -421,9 +429,9 @@ N = 300
 dx = (1-pl[0].x)/N
 tmax = 4
 points = PointList([pl])
+dt = dx / CJspeed * a2_eq 
 
-for i in range(N):
-    dt = dx / CJspeed * a2_eq 
+for i in range(N-1):    
     pl = points[-1]   
     p_start = Point(pl[0].x + dx, pl[0].t + dt, U_CJ, C_CJ, S_CJ)
     
@@ -436,8 +444,45 @@ for i in range(N):
     
     points.append(pl_new)
     print(f't_max = {np.max(points[-1].t)}')
-    
 
+pl = points[-1]
+R_plus1 = 2/(gamma_eq-1) * pl[0].C + pl[0].U
+p_start = Point(pl[0].x + dx, pl[0].t + dt, R_plus1/(2/(gamma_eq-1) + 1), R_plus1/(2/(gamma_eq-1) + 1), S_CJ)
+pl_new = add_new_Cminus(p_start,pl[1:])
+# p_zero = add_zero_point(pl_new[-1])
+# pl_new.append(p_zero)
+points.append(pl_new)
+
+#%% interpolate between last detonation C- and first expansion wave C-
+
+# last = points[-1]
+# R_plus1 = 2/(gamma_eq-1) * last[0].C + last[0].U
+# p_new = Point(last[0].x + dx, last[0].t + dt, R_plus1/(2/(gamma_eq-1) + 1), R_plus1/(2/(gamma_eq-1) + 1), S_CJ)
+# # p_new = add_end_point(last[1], last[0])[0]
+# pl_new = last
+
+# # interpolate some C- characteristics
+# for step in np.arange(0.1,1.1,0.1):
+#     p_start = Point(*(np.array(last[0])*(1-step) + np.array(p_new)*step))
+#     pl_new = add_new_Cminus(p_start,pl_new[1:])
+#     points.append(pl_new)
+    
+#%% proceed to create new C- characteristics along the sonic boundary
+last = points[-1]
+skip = 20
+p_new = add_end_point(last[skip+1], last[0])[0]
+pl_new = last
+p_start = p_new
+
+i = 0
+while 1:
+    pl_new = add_new_Cminus(p_start,pl_new[skip+1:])
+    points.append(pl_new)
+    p_start = add_end_point(pl_new[skip+2], pl_new[0])[0]
+    print(i)
+    i += 1
+    if any(np.array(pl_new.x[100:]) > 1):
+        break
 
 #%% transform coordinates
 xvec = np.concatenate((points.x))
