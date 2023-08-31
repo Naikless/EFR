@@ -11,6 +11,7 @@ import cantera as ct
 from collections import namedtuple
 from scipy.interpolate import griddata
 import sdtoolbox as sdt
+from scipy.interpolate import LinearNDInterpolator
 
 from efr import TaylorWave
 
@@ -31,7 +32,7 @@ s_CJ = det.postShock_eq.entropy_mass
 R = ct.gas_constant/det.postShock_eq.mean_molecular_weight
 
 beta = 1.85/30e-3
-cf = 0.0063#0.0063#0.0146#0.0146#0.0063
+cf = 0.0146#0.0063#0.0146#0.0146#0.0063
 
 T_w = 293
 P_out = 1e5
@@ -58,16 +59,18 @@ class PointList(list):
         return [getattr(p,name) for p in self]
         
 
-def plot_point(p,radius=5e-4,**kwargs):
+def plot_point(p,radius=5e-4,invert = False,**kwargs):
+    sign = -1 if invert else 1
+    
     plt.scatter(p.x,p.t,**kwargs)
     t_Cplus = np.linspace(0, radius / ((1+(p.U+p.C)**2))**0.5, 10)
-    plt.plot(p.x + (p.U+p.C) * t_Cplus, p.t + t_Cplus, 'k--')
+    plt.plot(p.x + (p.U+p.C) * t_Cplus * sign, p.t + t_Cplus  *sign, 'k--')
     
     t_Cminus = np.linspace(0, radius / ((1+(p.U-p.C)**2))**0.5, 10)
-    plt.plot(p.x + (p.U-p.C) * t_Cminus, p.t + t_Cminus, 'k-.')
+    plt.plot(p.x + (p.U-p.C) * t_Cminus *sign, p.t + t_Cminus *sign, 'k-.')
     
     t_U = np.linspace(0, radius / ((1+(p.U)**2))**0.5, 10)
-    plt.plot(p.x + p.U * t_U, p.t + t_U, 'k:')
+    plt.plot(p.x + p.U * t_U*sign, p.t + t_U*sign, 'k:')
 
 
 def solve_new_point(p1,p2, tol=1e-5):
@@ -348,6 +351,15 @@ def add_end_point(p1, p2, tol=1e-5):
         # C3 = (R_plus3 + R_minus3)/4 * (gamma_eq-1)
         U3 = C3 = R_plus3/(2/(gamma_eq-1) + 1)
         
+        P = P2 * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
+        if P < P_crit:
+            print('not choked!')
+            return None,None
+            
+            # P3 = P_out
+            # C3 = (P3/P2 / np.exp(gamma_eq*(S_CJ - S3))) ** ((gamma_eq-1)/(2*gamma_eq))
+            # U3 = R_plus3 - 2/(gamma_eq-1) *C3 
+        
         U13 = (U1+U3)/2
         # U23 = (U2+U3)/2
         
@@ -355,12 +367,7 @@ def add_end_point(p1, p2, tol=1e-5):
         # C23 = (C2+C3)/2
         
         # t3_ = (x1-x2 + t2*(U23-C23)-t1*(U13+C13)) / (U23-C23-U13-C13)
-        t3_ = (x3 - x1) / (U1 + C1) + t1
-        
-        
-        P = P2 * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
-        if P < P_crit:
-            print('not choked!')
+        t3_ = (x3 - x1) / (U13 + C13) + t1
         
         
         if abs(t3_ - t3) < tol:
@@ -393,9 +400,9 @@ def add_new_Cminus(p_start, plist,**kwargs):
     plist_new = PointList([p_new])
     
     for p_old in plist:
-        # plt.scatter(x_[-1],t_[-1])
         p_new,p4 = solve_new_point(p_old, p_new,**kwargs)
-        plist_new.append(p_new)        
+        plist_new.append(p_new)
+        # plt.scatter(p_new.x,p_new.t)
     
     p0,p1,p2 = plist_new[:3]
     dist_p0p1 = ((p1.x-p0.x)**2 + (p1.t-p0.t)**2)**0.5
@@ -431,7 +438,7 @@ tmax = 4
 points = PointList([pl])
 dt = dx / CJspeed * a2_eq 
 
-for i in range(N-1):    
+for i in range(N):    
     pl = points[-1]   
     p_start = Point(pl[0].x + dx, pl[0].t + dt, U_CJ, C_CJ, S_CJ)
     
@@ -443,46 +450,38 @@ for i in range(N-1):
             pl_new.append(p_zero)
     
     points.append(pl_new)
-    print(f't_max = {np.max(points[-1].t)}')
-
-pl = points[-1]
-R_plus1 = 2/(gamma_eq-1) * pl[0].C + pl[0].U
-p_start = Point(pl[0].x + dx, pl[0].t + dt, R_plus1/(2/(gamma_eq-1) + 1), R_plus1/(2/(gamma_eq-1) + 1), S_CJ)
-pl_new = add_new_Cminus(p_start,pl[1:])
-# p_zero = add_zero_point(pl_new[-1])
-# pl_new.append(p_zero)
-points.append(pl_new)
+    # print(f't_max = {np.max(points[-1].t)}')
 
 #%% interpolate between last detonation C- and first expansion wave C-
 
-# last = points[-1]
-# R_plus1 = 2/(gamma_eq-1) * last[0].C + last[0].U
-# p_new = Point(last[0].x + dx, last[0].t + dt, R_plus1/(2/(gamma_eq-1) + 1), R_plus1/(2/(gamma_eq-1) + 1), S_CJ)
-# # p_new = add_end_point(last[1], last[0])[0]
-# pl_new = last
+last = points[-1]
+skip = 100
+p_new = add_end_point(last[skip+1], last[skip])[0]
+pl_new = last
 
-# # interpolate some C- characteristics
-# for step in np.arange(0.1,1.1,0.1):
-#     p_start = Point(*(np.array(last[0])*(1-step) + np.array(p_new)*step))
-#     pl_new = add_new_Cminus(p_start,pl_new[1:])
-#     points.append(pl_new)
+# interpolate some C- characteristics
+for step in np.arange(0.1,1.1,0.2):
+    p_start = Point(*(np.array(last[0])*(1-step) + np.array(p_new)*step))
+    pl_new = [p for p in pl_new if p.t >= p_start.t]
+    pl_new = add_new_Cminus(p_start,pl_new)
+    points.append(pl_new)
     
 #%% proceed to create new C- characteristics along the sonic boundary
 last = points[-1]
 skip = 20
-p_new = add_end_point(last[skip+1], last[0])[0]
+p_new = add_end_point(last[skip+1], last[skip])[0]
 pl_new = last
 p_start = p_new
 
-i = 0
 while 1:
     pl_new = add_new_Cminus(p_start,pl_new[skip+1:])
     points.append(pl_new)
-    p_start = add_end_point(pl_new[skip+2], pl_new[0])[0]
-    print(i)
-    i += 1
-    if any(np.array(pl_new.x[100:]) > 1):
+    if len(pl_new) <= skip+1 or pl_new[-1].x > 1:
         break
+    p_start = add_end_point(pl_new[skip+1], pl_new[skip])[0]
+    if not p_start:
+        break
+        
 
 #%% transform coordinates
 xvec = np.concatenate((points.x))
@@ -512,7 +511,7 @@ plt.cla()
 plt.scatter(xvec,tvec,c=Uvec)
 
 #%% interpolate results
-x_eq, tau_eq = np.meshgrid(np.linspace(0, 1,100),np.linspace(0, 1, 100))
+x_eq, tau_eq = np.meshgrid(np.linspace(0, 1,100),np.linspace(0, 1,100))
 
 U_int = griddata((xvec, tvec/tmax), Uvec, (x_eq,tau_eq))
 # U_int = griddata((xvec, np.array(t).flatten()), np.array(U).flatten(), (x_eq,tau_eq))
@@ -533,6 +532,8 @@ plt.imshow(P_int,origin='lower')
 # plt.scatter(xvec,tvec,c=Svec)
 
 # plt.imshow(U_int,origin='lower')
+
+
 
 
 
