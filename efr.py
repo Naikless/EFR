@@ -47,13 +47,13 @@ class Detonation:
         if name in {'T1','P1','X1','mech','recalc'} and old != value:
             self._force_recalc()
     
-    def _force_recalc(self):
+    def _force_recalc(self, extra_attr = [None]):
         if not self.recalc:
             if not hasattr(self,'_recalc_warning'):
                 print("\nDynamic recalculation is disabled! Detonation properties won't be updated unless called explicitly!\n")
                 self._recalc_warning = True
             return
-        for prop in ['_cj_speed','_postShock_eq_state','_postShock_fr_state', '_znd_out']:
+        for prop in ['_cj_speed','_postShock_eq_state','_postShock_fr_state', '_znd_out', *extra_attr]:
             if hasattr(self,prop):
                 delattr(self,prop)
         print('Calculating detonation properties')
@@ -98,12 +98,9 @@ class Detonation:
     
     @property
     def CJspeed(self):
-        if hasattr(self, '_cj_speed'):
-            return self._cj_speed
-        else:
+        if not hasattr(self, '_cj_speed'):
             self._cj_speed = self._sdps.CJspeed(self.P1, self.T1, self.X1, self.mech)
-            return self._cj_speed
-
+        return self._cj_speed
     
 
     def znd(self, **kwargs):
@@ -123,8 +120,8 @@ class Detonation:
             znd_out['gas1'] = znd_out['gas1'].state
             self._znd_out = znd_out
             return self._znd_out
-        
-        
+
+
 
 class TaylorWave(Detonation):
     
@@ -132,21 +129,89 @@ class TaylorWave(Detonation):
         super().__init__(*args, **kwargs)
         self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
-        # self.C_f = 0.0062    # heat transfer coefficient directly from DOI:10.2514/1.10286
+        self.n = 1 / (1 - self.nu * (1 - 1/self.gamma_eq)) # polytropic exponent n = gamma/(gamma-nu(gamma-1)) ("Thermodynamik", Baehr)
+
+
+    def _force_recalc(self):
+        super()._force_recalc(extra_attr=['_a2_eq', '_T2', '_P2'])
+
+
+    @property
+    def T2(self):
+        if not hasattr(self, '_T2'):
+            self._T2 = self.postShock_eq.T
+        return self._T2
+    
     
     @property
+    def P2(self):
+        if not hasattr(self, '_P2'):
+            self._P2 = self.postShock_eq.P
+        return self._P2
+
+    @property
     def a2_eq(self):
-        return self._soundspeed_eq(self.postShock_eq)
-    
+        if not hasattr(self, '_a2_eq'):
+            self._a2_eq = self._soundspeed_eq(self.postShock_eq)
+        return self._a2_eq
+
+
     @property
     def gamma_eq(self):
         return  self.a2_eq**2*self.postShock_eq.density/self.postShock_eq.P
-    
+
+
     @property
     def u2(self):
         return self.CJspeed-self.a2_eq
+
+
+    def _phi(self,x,t):
+        CJspeed, u2, n = self.CJspeed, self.u2, self.n
+        return 2/(n+1)*(x/t/CJspeed-1) + u2/CJspeed
+
+
+    def _eta(self,x,t):
+        CJspeed, a2_eq, n = self.CJspeed, self.a2_eq, self.n
+        return (n-1)/(n+1)*(x/t/CJspeed-1) + a2_eq/CJspeed
+
+
+    def u(self,x,t):
+        CJspeed, phi = self.CJspeed, self._phi
+        if  x/t > CJspeed:
+            return self.u0 
+        else:
+            return self._np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + self.u0
     
     
+    def c(self,x,t):
+        CJspeed, eta, u2, n = self.CJspeed, self._eta, self.u2, self.n
+        if x/t <= CJspeed - u2 * (n+1)/2:
+            return eta(CJspeed - u2 * (n+1)/2,1) * CJspeed
+        else:
+            return eta(x,t) * CJspeed
+        
+    
+    def T(self,x,t):
+        CJspeed, u2, eta, n, a2_eq = self.CJspeed, self.u2, self._eta, self.n, self.a2_eq
+        if x/t > CJspeed:
+            return self.T1
+        elif x/t <= CJspeed - u2 * (n+1)/2:
+            return self.T2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**2
+        else:
+            return self.T2 * (eta(x,t)*CJspeed/ a2_eq)**2
+        
+    
+    def P(self,x,t):
+        CJspeed, u2, eta, n, a2_eq = self.CJspeed, self.u2, self._eta, self.n, self.a2_eq
+        if x/t > CJspeed:
+            return self.P1
+        elif x/t <= CJspeed - u2 * (n+1)/2:
+            return self.P2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
+        else:
+            return self.P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
+
+
     
     def point_history(self,x,t,dt=1e-6):
         """
@@ -154,45 +219,12 @@ class TaylorWave(Detonation):
         resolution dt
         """
         CJspeed = self.CJspeed
-        P1 = self.P1
-        a2_eq = self.a2_eq
-        T1 = self.T1
-        u2 = CJspeed - self.znd()['U'][-1]  #CJspeed-a2_eq
-        T2 = self.postShock_eq.T
-        P2 = self.postShock_eq.P
-        n = 1 / (1 - self.nu * (1 - 1/self.gamma_eq)) # polytropic exponent n = gamma/(gamma-nu(gamma-1)) ("Thermodynamik", Baehr)
-        
-        def phi(x,t): 
-            return 2/(n+1)*(x/t/CJspeed-1) + u2/CJspeed
-    
-        def eta(x,t):
-            return (n-1)/(n+1)*(x/t/CJspeed-1) + a2_eq/CJspeed
-        
-        def u(x,t):
-            if  x/t > CJspeed:
-                return self.u0 
-            else:
-                return self._np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + self.u0
-        
-        def T(x,t):
-            if x/t > CJspeed:
-                return T1
-            elif x/t <= CJspeed - u2 * (n+1)/2:
-                return T2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**2
-            else:
-                return T2 * (eta(x,t)*CJspeed/ a2_eq)**2
-        
-        def P(x,t):
-            if x/t > CJspeed:
-                return P1
-            elif x/t <= CJspeed - u2 * (n+1)/2:
-                return P2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
-            else:
-                return P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
-        
+        P1, T1 = self.P1, self.T1
         
         gas = self._ct.Solution(self.mech)
         Y_init = self.znd()['species'][:,-1]
+        
+        u, P, T = self.u, self.P, self.T
         
         x = [x]
         t = [t]
