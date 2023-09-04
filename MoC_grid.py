@@ -11,7 +11,7 @@ import cantera as ct
 from collections import namedtuple
 from scipy.interpolate import griddata
 import sdtoolbox as sdt
-from scipy.interpolate import LinearNDInterpolator
+from itertools import chain
 
 from efr import TaylorWave
 
@@ -72,8 +72,12 @@ def plot_point(p,radius=5e-4,invert = False,**kwargs):
     t_U = np.linspace(0, radius / ((1+(p.U)**2))**0.5, 10)
     plt.plot(p.x + p.U * t_U*sign, p.t + t_U*sign, 'k:')
 
+def find_point(points,x,t):
+    points = PointList(chain.from_iterable(points))
+    idx = np.argmin(((np.array(points.x) - x)**2 + (np.array(points.t)-t)**2)**0.5)
+    return points[idx], idx
 
-def solve_new_point(p1,p2, tol=1e-5):
+def solve_new_point(p1,p2, tol=1e-3):
     x1,t1,U1,C1,S1 = p1
     x2,t2,U2,C2,S2 = p2
     
@@ -103,9 +107,9 @@ def solve_new_point(p1,p2, tol=1e-5):
         
         n4 = 0
         while 1:
-            U4 = (x4-x1)/(x2-x1) * U1 +  (x2-x4)/(x2-x1) * U2
-            C4 = (x4-x1)/(x2-x1) * C1 +  (x2-x4)/(x2-x1) * C2
-            S4 = (x4-x1)/(x2-x1) * S1 +  (x2-x4)/(x2-x1) * S2
+            U4 = (x4-x1)/(x2-x1) * U2 +  (x2-x4)/(x2-x1) * U1
+            C4 = (x4-x1)/(x2-x1) * C2 +  (x2-x4)/(x2-x1) * C1
+            S4 = (x4-x1)/(x2-x1) * S2 +  (x2-x4)/(x2-x1) * S1
             
             U34 = (U3+U4)/2
             C34 = (C3+C4)/2
@@ -115,7 +119,7 @@ def solve_new_point(p1,p2, tol=1e-5):
             x4_ = x3 - U34 * (t3-t4_)
             
             
-            if abs(x4_ - x4) < tol and abs(t4_ - t4) < tol:
+            if abs(x4_ - x4)/x4 < tol and abs(t4_ - t4)/t4 < tol:
                 break
             else:
                 if n4 > 100:
@@ -133,7 +137,7 @@ def solve_new_point(p1,p2, tol=1e-5):
               * (C34**2 - (gamma_eq-1)/2 * U34**2 - C0**2)
               * (t3-t4)
               )
-         
+        
         R_plus3 = (R_plus1 - beta * 2 *cf *abs(U13) /C13
                    * (C13**2 - (gamma_eq-1)/2 * U13**2 - C0**2 + U13*C13)
                    * (t3-t1)
@@ -158,7 +162,7 @@ def solve_new_point(p1,p2, tol=1e-5):
         t3_ = (x1-x2 + t2*(U23-C23)-t1*(U13+C13)) / (U23-C23-U13-C13)
         x3_ = (U13+C13) * (t3_-t1) + x1
         
-        if abs(x3_ - x3) < tol and abs(t3_ - t3) < tol:
+        if abs(x3_ - x3)/x3 < tol and abs(t3_ - t3)/t3 < tol:
             break
         else:
             if n > 100:
@@ -242,7 +246,7 @@ def initial_grid_det(ds,t0):
 
 #%%
 
-def add_zero_point(p, tol=1e-5):
+def add_zero_point(p, tol=1e-3):
     x2,t2,U2,C2,S2 = p
     
     x3 = 0
@@ -277,7 +281,7 @@ def add_zero_point(p, tol=1e-5):
 
 #%%
 
-def add_end_point(p1, p2, tol=1e-5):
+def add_end_point(p1, p2, tol=1e-3):
     x1,t1,U1,C1,S1 = p1
     x2,t2,U2,C2,S2 = p2
               
@@ -316,7 +320,7 @@ def add_end_point(p1, p2, tol=1e-5):
             x4_ = x3 - U34 * (t3-t4_)
             
             
-            if abs(x4_ - x4) < tol and abs(t4_ - t4) < tol:
+            if abs(x4_ - x4)/x4 < tol and abs(t4_ - t4)/t4 < tol:
                 break
             else:
                 if n4 > 100:
@@ -370,7 +374,7 @@ def add_end_point(p1, p2, tol=1e-5):
         t3_ = (x3 - x1) / (U13 + C13) + t1
         
         
-        if abs(t3_ - t3) < tol:
+        if abs(t3_ - t3)/t3 < tol:
             break
         else:
             if n > 100:
@@ -455,12 +459,12 @@ for i in range(N):
 #%% interpolate between last detonation C- and first expansion wave C-
 
 last = points[-1]
-skip = 100
+skip = 0
 p_new = add_end_point(last[skip+1], last[skip])[0]
 pl_new = last
 
 # interpolate some C- characteristics
-for step in np.arange(0.1,1.1,0.2):
+for step in np.arange(0.1,1.1,0.1):
     p_start = Point(*(np.array(last[0])*(1-step) + np.array(p_new)*step))
     pl_new = [p for p in pl_new if p.t >= p_start.t]
     pl_new = add_new_Cminus(p_start,pl_new)
@@ -475,9 +479,9 @@ p_start = p_new
 
 while 1:
     pl_new = add_new_Cminus(p_start,pl_new[skip+1:])
-    points.append(pl_new)
-    if len(pl_new) <= skip+1 or pl_new[-1].x > 1:
+    if len(pl_new) <= skip+1 or any(np.abs(np.array(pl_new.x)[-10:-1]-1) < 1e-8):
         break
+    points.append(pl_new)
     p_start = add_end_point(pl_new[skip+1], pl_new[skip])[0]
     if not p_start:
         break
@@ -532,8 +536,3 @@ plt.imshow(P_int,origin='lower')
 # plt.scatter(xvec,tvec,c=Svec)
 
 # plt.imshow(U_int,origin='lower')
-
-
-
-
-
