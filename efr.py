@@ -226,50 +226,71 @@ class TaylorWave(Detonation):
             return self.P_CJ * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
     
     
-    def streamline(self,x0,t0,dt=1e-6,u_func=None):
+    def streamline(self,x0,t0,dt=1e-6,u_func=None,**kwargs):
         
         if not u_func:
             u_func = self.u
         
         func = lambda t, x : [-u_func(x,t0-t)]
         
-        result = solve_ivp(func,(0,t0),[x0],t_eval=np.arange(0,t0,dt))
+        result = solve_ivp(func,(0,t0),[x0],t_eval=np.arange(0,t0,dt), **kwargs)
         x = result.y[0]
         t = t0 - result.t
         
         return x,t
 
 
-    def point_history(self,x,t,dt=1e-6):
+    def point_history(self,x0,t0,dt=1e-6):
         """
         calculate time history of particle at location x at time t with time 
         resolution dt
         """
-        CJspeed = self.CJspeed
+        CJspeed, a2_eq = self.CJspeed, self.a2_eq
         P1, T1 = self.P1, self.T1
         
         gas = self._ct.Solution(self.mech)
         Y_init = self.znd()['species'][:,-1]
         
-        u, P, T = self.u, self.P, self.T
+        if not hasattr(self, 'MoC'):
+            # print('Using isentropic Taylor solution')
+            u, P, T = self.u, self.P, self.T
+            
+            x = [x0]
+            t = [t0]
+            while 1:
+                if (t[-1] - dt)*CJspeed > x[-1]:         
+                    x.append(x[-1] - u(x[-1],t[-1]-dt) * dt)
+                    t.append(t[-1] - dt)
+                else:
+                    break
+            
+            T_vec = np.array([T(x,t) for x,t in zip(x,t)])
+            P_vec = np.array([P(x,t) for x,t in zip(x,t)])
+            t = np.array(t)
+            x = np.array(x)
         
-        x = [x]
-        t = [t]
-        while 1:
-            if (t[-1] - dt)*CJspeed > x[-1]:         
-                x.append(x[-1] - u(x[-1],t[-1]-dt) * dt)
-                t.append(t[-1] - dt)
-            else:
-                break
+        else:
+            L = self.MoC.L
+            
+            T = lambda x,t : self.MoC.T(x/L,t/L*a2_eq)
+            P = lambda x,t : self.MoC.P(x/L,t/L*a2_eq)
+            u = lambda x,t : self.MoC.U(x/L,t/L*a2_eq) * a2_eq
+            
+            x,t = self.streamline(x0, t0, u_func=u, dt=dt)
+            
+            T_vec = T(x,t)
+            P_vec = P(x,t)
         
         t = t[::-1]
         x = x[::-1]
-        
+        T_vec = T_vec[::-1]
+        P_vec = P_vec[::-1]
+    
         # set initial time to zero for reactor
-        t_r = [t_ - t[0] for t_ in t]
+        t_r = t - t[0]
         
         # first time step
-        gas.TPY = T(x[0],t[0]) , P(x[0],t[0]) , Y_init
+        gas.TPY = T_vec[0] , P_vec[0] , Y_init
         
         
         # construct reactor network
@@ -292,9 +313,9 @@ class TaylorWave(Detonation):
         sim.advance(t_r[1])
         states.append(r.thermo.state)
         
-        for x_,t_,t_r_ in zip(x[1:-1],t[1:-1],t_r[2:]):
+        for T_,P_,t_r_ in zip(T_vec[1:-1],P_vec[1:-1],t_r[2:]):
             
-            gas.TP = T(x_,t_) , P(x_,t_)
+            gas.TP = T_ , P_
             r.syncState()
             
             sim.advance(t_r_)

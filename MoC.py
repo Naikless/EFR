@@ -132,13 +132,14 @@ class MoC:
     """
     Object to contain the calculated fields from the MoC.
     """
-    def __init__(self, det : 'efr.TaylorWave', beta, ds, N, cf=0, T_w=None, P_out=None):
+    def __init__(self, det : 'efr.TaylorWave', L, D, ds, N, cf=0, T_w=None, P_out=None):
         self.p_isentropic = det.P
         self.u_isentropic = det.u
         self.c_isentropic = det.c
         
         self.det = det
-        self.beta = beta
+        self.L = L
+        self.beta = L/D
         self.cf = cf
         self.ds = ds
         self.N = N
@@ -146,7 +147,6 @@ class MoC:
         T_w = T_w if T_w else det.T1
         P_out = P_out if P_out else det.P1
         
-        self.P_CJ = det.postShock_eq.P
         self.s_CJ = det.postShock_eq.entropy_mass
         self.R = ct.gas_constant/det.postShock_eq.mean_molecular_weight
         
@@ -210,7 +210,7 @@ class MoC:
         self.C = LinearNDInterpolator(list(zip(x, t)), flat_point_list.C)
         self.S = LinearNDInterpolator(list(zip(x, t)), flat_point_list.S)
         
-        self.P = lambda x,t : self.P_CJ * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
+        self.P = lambda x,t : self.det.P_CJ * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
         self.T = lambda x,t : (self.C(x,t)*self.det.a2_eq)**2 / self.det.gamma_eq / self.R
         
         self.points = points
@@ -628,7 +628,7 @@ class MoC:
         beta = self.beta
         cf = self.cf
         C0 = self.C0
-        P_CJ = self.P_CJ
+        P_CJ = self.det.P_CJ
 
                   
         x3 = 1
