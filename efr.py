@@ -21,6 +21,7 @@ import cantera as ct
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
+from scipy.integrate import solve_ivp
 
 class Detonation:
         
@@ -217,9 +218,22 @@ class TaylorWave(Detonation):
             return self.P_CJ * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
         else:
             return self.P_CJ * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
-
-
     
+    
+    def streamline(self,x0,t0,dt=1e-6,u_func=None):
+        
+        if not u_func:
+            u_func = self.u
+        
+        func = lambda t, x : [-u_func(x,t0-t)]
+        
+        result = solve_ivp(func,(0,t0),[x0],t_eval=np.arange(0,t0,dt))
+        x = result.y[0]
+        t = t0 - result.t
+        
+        return x,t
+
+
     def point_history(self,x,t,dt=1e-6):
         """
         calculate time history of particle at location x at time t with time 
