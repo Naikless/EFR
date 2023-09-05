@@ -26,8 +26,8 @@ from scipy.interpolate import LinearNDInterpolator
 from efr import TaylorWave
 
 # values are normalized:
-#   t = t' * c_CJ / L  # corresponds to tau in above papers, t' is time
-#   x = x' / L         # corresponds to xi in above papers, x' is space
+#   t = t' * c_CJ / L  # = tau in the above papers, t' is non-normalized time
+#   x = x' / L         # = xi in the above papers, x' is non-normalized space
 #   U = u / c_CJ
 #   C = c / c_CJ
 #   S = s / s_CJ
@@ -133,6 +133,10 @@ class MoC:
     Object to contain the calculated fields from the MoC.
     """
     def __init__(self, det : TaylorWave, beta, ds, N, cf=0, T_w=None, P_out=None):
+        self.p_isentropic = det.P
+        self.u_isentropic = det.u
+        self.c_isentropic = det.c
+        
         self.det = det
         self.beta = beta
         self.cf = cf
@@ -142,26 +146,20 @@ class MoC:
         T_w = T_w if T_w else det.T1
         P_out = P_out if P_out else det.P1
         
-        self.CJspeed = det.CJspeed
-        self.a2_eq = det.a2_eq
-        self.u2 = self.CJspeed - self.a2_eq  #CJspeed-a2_eq
-        self.T2 = det.postShock_eq.T
-        self.P2 = det.postShock_eq.P
-        self.gamma_eq = det.gamma_eq
+        self.P_CJ = det.postShock_eq.P
         self.s_CJ = det.postShock_eq.entropy_mass
         self.R = ct.gas_constant/det.postShock_eq.mean_molecular_weight
         
-        self.P_crit = P_out/(2/(self.gamma_eq+1))**(self.gamma_eq/(self.gamma_eq-1))
-        self.u0 = det.u0
+        self.P_crit = P_out/(2/(det.gamma_eq+1))**(det.gamma_eq/(det.gamma_eq-1))
         
         gas = det.postShock_eq
         gas.TP = T_w,gas.P
         gamma = sdt.thermo.soundspeed_eq(gas)**2/gas.P*gas.density
-        self.C0 = (gamma * ct.gas_constant /gas.mean_molecular_weight * T_w)**0.5 / self.a2_eq # normalized speed of sound at wall temperature
+        self.C0 = (gamma * ct.gas_constant /gas.mean_molecular_weight * T_w)**0.5 / det.a2_eq # normalized speed of sound at wall temperature
         
-        self.U_CJ = self.u2/self.a2_eq
+        self.U_CJ = det.u2/det.a2_eq
         self.C_CJ = 1
-        self.S_CJ = self.s_CJ/self.gamma_eq/self.R
+        self.S_CJ = self.s_CJ/det.gamma_eq/self.R
 
 
 
@@ -184,7 +182,7 @@ class MoC:
         """
         ds = ds if ds else self.ds
         N = N if N else self.N
-        gamma_eq = self.gamma_eq
+        gamma_eq = self.det.gamma_eq
         
         print('\nCalulating MoC\n')
         
@@ -201,7 +199,7 @@ class MoC:
 
         print('\nCreate new C- characteristics along the sonic boundary.\n')
         skip = 20
-        points.extend(self.new_Cminus_exit(points[-1], skip))
+        points.extend(self._new_Cminus_exit(points[-1], skip))
         
         
         flat_point_list = points.flatten()
@@ -212,8 +210,8 @@ class MoC:
         self.C = LinearNDInterpolator(list(zip(x, t)), flat_point_list.C)
         self.S = LinearNDInterpolator(list(zip(x, t)), flat_point_list.S)
         
-        self.P = lambda x,t : self.P2 * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
-        self.T = lambda x,t : (self.C(x,t)*self.a2_eq)**2 / self.gamma_eq / self.R
+        self.P = lambda x,t : self.P_CJ * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
+        self.T = lambda x,t : (self.C(x,t)*self.det.a2_eq)**2 / self.det.gamma_eq / self.R
         
         return points
 
@@ -238,11 +236,13 @@ class MoC:
         points = PointList([])
         pl = C_minus_start
         dx = (1-pl[0].x)/N
-        dt = dx / self.CJspeed * self.a2_eq    
+        dt = dx / self.det.CJspeed * self.det.a2_eq
+        
+        U_CJ, C_CJ, S_CJ = self.U_CJ, self.C_CJ, self.S_CJ
         
         for i in range(N):
-            p_start = Point(pl[0].x + dx, pl[0].t + dt, self.U_CJ, self.C_CJ, self.S_CJ)
-            pl = self.new_Cminus(p_start,pl[1:])
+            p_start = Point(pl[0].x + dx, pl[0].t + dt, U_CJ, C_CJ, S_CJ)
+            pl = self._new_Cminus(p_start,pl[1:])
             p_zero = self.add_zero_point(pl[-1])
             pl.append(p_zero)
             points.append(pl) 
@@ -274,14 +274,14 @@ class MoC:
         for step in np.arange(0.1,1.1,0.1):
             p_start = Point(*(np.array(last_C_minus[0])*(1-step) + np.array(p_new)*step))
             pl = [p for p in pl if p.t >= p_start.t]
-            pl = self.new_Cminus(p_start,pl)
+            pl = self._new_Cminus(p_start,pl)
             points.append(pl)
         
         self.interp_points = points
         return points
     
     
-    def new_Cminus(self, p_start, last_C_minus,**kwargs):
+    def _new_Cminus(self, p_start, last_C_minus,**kwargs):
         """
         Calculate new C- characteristic from a starting point along the
         detonation, following the previous C- characteristic.
@@ -320,7 +320,7 @@ class MoC:
         return plist_new
 
     
-    def new_Cminus_exit(self, last_C_minus, skip):
+    def _new_Cminus_exit(self, last_C_minus, skip):
         """
         Calculate new C- characteristic from a starting point along the
         domain exit, following the previous C- characteristic.
@@ -348,7 +348,7 @@ class MoC:
         
         points = PointList([])
         while 1:
-            pl_new = self.new_Cminus(p_start,pl_new[skip+1:])
+            pl_new = self._new_Cminus(p_start,pl_new[skip+1:])
             if len(pl_new) <= skip+1 or any(np.abs(np.array(pl_new.x)[-10:-1]-1) < 1e-8):
                 break
             points.append(pl_new)
@@ -381,7 +381,10 @@ class MoC:
         """
         x1,t1,U1,C1,S1 = p1
         x2,t2,U2,C2,S2 = p2
-        gamma_eq, cf, beta, C0 = self.gamma_eq, self.cf, self.beta, self.C0
+        gamma_eq = self.det.gamma_eq
+        cf = self.cf
+        beta = self.beta
+        C0 = self.C0
         
         # first approximation assumes constant characteristic slopes and invariants, i.e. isentopropic flow
         t3 = (x1-x2 + t2*(U2-C2)-t1*(U1+C1)) / (U2-C2-U1-C1)
@@ -495,11 +498,17 @@ class MoC:
 
         """
         
-        gamma_eq, CJspeed, a2_eq, = self.gamma_eq, self.CJspeed, self.a2_eq
+        gamma_eq = self.det.gamma_eq
+        P_CJ = self.det.P_CJ
+        a2_eq = self.det.a2_eq
         
-        p0 = Point(CJspeed/a2_eq * t0, t0, self.U_CJ, self.C_CJ, self.S_CJ)
+        p0 = Point(self.det.CJspeed/a2_eq * t0, t0, self.U_CJ, self.C_CJ, self.S_CJ)
         pl = PointList([p0])
-        p_new = p0      
+        p_new = p0
+        
+        p_isentropic, u_isentropic, c_isentropic = self.det.P, self.det.u, self.det.c
+        
+        s_CJ, R = self.s_CJ, self.R
         
         while 1:
             p_old = pl[-1]
@@ -509,12 +518,12 @@ class MoC:
             x_new = p_old.x+dx
             t_new = p_old.t+dt
             
-            p_ = self.det.P(x_new,t_new/a2_eq)
-            u_ = self.det.u(x_new,t_new/a2_eq)
-            c_ = self.det.c(x_new,t_new/a2_eq)
-            s_ = self.s_CJ - self.R * (np.log(p_/self.P2) + 2*gamma_eq/(gamma_eq-1)*np.log(a2_eq/c_))
+            p_ = p_isentropic(x_new,t_new/a2_eq)
+            u_ = u_isentropic(x_new,t_new/a2_eq)
+            c_ = c_isentropic(x_new,t_new/a2_eq)
+            s_ = s_CJ - R * (np.log(p_/P_CJ) + 2*gamma_eq/(gamma_eq-1)*np.log(a2_eq/c_))
             
-            p_new = Point(x_new, t_new, u_/a2_eq, c_/a2_eq, s_/gamma_eq/self.R )
+            p_new = Point(x_new, t_new, u_/a2_eq, c_/a2_eq, s_/gamma_eq/R )
             
             if p_new.U <= 0:
                 p = pl[-1]
@@ -545,8 +554,11 @@ class MoC:
 
         """
         x2,t2,U2,C2,S2 = p
-        
-        gamma_eq, S_CJ, beta, cf, C0 = self.gamma_eq, self.S_CJ, self.beta, self.cf, self.C0
+        gamma_eq = self.det.gamma_eq
+        cf = self.cf
+        beta = self.beta
+        C0 = self.C0
+        S_CJ = self.S_CJ
         
         x3 = 0
         t3 = (x3 - x2) / (U2-C2) + t2
@@ -609,7 +621,12 @@ class MoC:
         x1,t1,U1,C1,S1 = p1
         x2,t2,U2,C2,S2 = p2
         
-        gamma_eq, S_CJ, beta, cf, C0 = self.gamma_eq, self.S_CJ, self.beta, self.cf, self.C0
+        gamma_eq =  self.det.gamma_eq
+        S_CJ = self.S_CJ
+        beta = self.beta
+        cf = self.cf
+        C0 = self.C0
+        P_CJ = self.P_CJ
 
                   
         x3 = 1
@@ -672,7 +689,7 @@ class MoC:
             
             U3 = C3 = R_plus3/(2/(gamma_eq-1) + 1)
             
-            P = self.P2 * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
+            P = P_CJ * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
             if P < self.P_crit:
                 print('not choked!')
                 return None,None

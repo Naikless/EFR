@@ -129,25 +129,30 @@ class TaylorWave(Detonation):
         super().__init__(*args, **kwargs)
         self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
-        self.n = 1 / (1 - self.nu * (1 - 1/self.gamma_eq)) # polytropic exponent n = gamma/(gamma-nu(gamma-1)) ("Thermodynamik", Baehr)
 
 
     def _force_recalc(self):
-        super()._force_recalc(extra_attr=['_a2_eq', '_T2', '_P2'])
-
-
-    @property
-    def T2(self):
-        if not hasattr(self, '_T2'):
-            self._T2 = self.postShock_eq.T
-        return self._T2
+        super()._force_recalc(extra_attr=['_a2_eq', '_T_CJ', '_P_CJ', '_gamma_eq'])
     
     
     @property
-    def P2(self):
-        if not hasattr(self, '_P2'):
-            self._P2 = self.postShock_eq.P
-        return self._P2
+    def n(self): # polytropic exponent n = gamma/(gamma-nu(gamma-1)) ("Thermodynamik", Baehr)
+        return 1 / (1 - self.nu * (1 - 1/self.gamma_eq))
+
+
+    @property
+    def T_CJ(self):
+        if not hasattr(self, '_T_CJ'):
+            self._T_CJ = self.postShock_eq.T
+        return self._T_CJ
+    
+    
+    @property
+    def P_CJ(self):
+        if not hasattr(self, '_P_CJ'):
+            self._P_CJ = self.postShock_eq.P
+        return self._P_CJ
+
 
     @property
     def a2_eq(self):
@@ -158,7 +163,9 @@ class TaylorWave(Detonation):
 
     @property
     def gamma_eq(self):
-        return  self.a2_eq**2*self.postShock_eq.density/self.postShock_eq.P
+        if not hasattr(self, '_gamma_eq'):
+            self._gamma_eq = self.a2_eq**2*self.postShock_eq.density/self.postShock_eq.P
+        return self._gamma_eq
 
 
     @property
@@ -197,9 +204,9 @@ class TaylorWave(Detonation):
         if x/t > CJspeed:
             return self.T1
         elif x/t <= CJspeed - u2 * (n+1)/2:
-            return self.T2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**2
+            return self.T_CJ * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**2
         else:
-            return self.T2 * (eta(x,t)*CJspeed/ a2_eq)**2
+            return self.T_CJ * (eta(x,t)*CJspeed/ a2_eq)**2
         
     
     def P(self,x,t):
@@ -207,9 +214,9 @@ class TaylorWave(Detonation):
         if x/t > CJspeed:
             return self.P1
         elif x/t <= CJspeed - u2 * (n+1)/2:
-            return self.P2 * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
+            return self.P_CJ * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
         else:
-            return self.P2 * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
+            return self.P_CJ * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
 
 
     
