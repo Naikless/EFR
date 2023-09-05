@@ -22,6 +22,7 @@ from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
 from scipy.integrate import solve_ivp
+from MoC import MoC
 
 class Detonation:
         
@@ -134,6 +135,11 @@ class TaylorWave(Detonation):
 
     def _force_recalc(self):
         super()._force_recalc(extra_attr=['_a2_eq', '_T_CJ', '_P_CJ', '_gamma_eq'])
+    
+    
+    def create_MoC(self, *args, **kwargs):
+        self.MoC = MoC(self, *args, **kwargs)
+        self.MoC.solve_MoC()
     
     
     @property

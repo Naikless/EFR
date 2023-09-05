@@ -23,7 +23,7 @@ import cantera as ct
 from collections import namedtuple
 import sdtoolbox as sdt
 from scipy.interpolate import LinearNDInterpolator
-from efr import TaylorWave
+import efr
 
 # values are normalized:
 #   t = t' * c_CJ / L  # = tau in the above papers, t' is non-normalized time
@@ -132,7 +132,7 @@ class MoC:
     """
     Object to contain the calculated fields from the MoC.
     """
-    def __init__(self, det : TaylorWave, beta, ds, N, cf=0, T_w=None, P_out=None):
+    def __init__(self, det : 'efr.TaylorWave', beta, ds, N, cf=0, T_w=None, P_out=None):
         self.p_isentropic = det.P
         self.u_isentropic = det.u
         self.c_isentropic = det.c
@@ -212,6 +212,8 @@ class MoC:
         
         self.P = lambda x,t : self.P_CJ * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
         self.T = lambda x,t : (self.C(x,t)*self.det.a2_eq)**2 / self.det.gamma_eq / self.R
+        
+        self.points = points
         
         return points
 
