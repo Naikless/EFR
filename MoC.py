@@ -22,7 +22,6 @@ import numpy as np
 import cantera as ct
 from collections import namedtuple
 import sdtoolbox as sdt
-from scipy.interpolate import LinearNDInterpolator
 import efr
 
 # values are normalized:
@@ -205,14 +204,21 @@ class MoC:
         flat_point_list = points.flatten()
         x = np.array(flat_point_list.x)
         t = np.array(flat_point_list.t)
-                
-        self.U = LinearNDInterpolator(list(zip(x, t)), flat_point_list.U)
-        self.C = LinearNDInterpolator(list(zip(x, t)), flat_point_list.C)
-        self.S = LinearNDInterpolator(list(zip(x, t)), flat_point_list.S)
         
-        self.P = lambda x,t : self.det.P_CJ * self.C(x,t)**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - self.S(x,t)))
-        self.T = lambda x,t : (self.C(x,t)*self.det.a2_eq)**2 / self.det.gamma_eq / self.R
+        U = np.array(flat_point_list.U)
+        C = np.array(flat_point_list.C)
+        S = np.array(flat_point_list.S)
+        T = (C * self.det.a2_eq)**2 / self.det.gamma_eq / self.R
+        P = self.det.P_CJ * C**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - S))
         
+        self.x = x
+        self.t = t
+        self.U = U
+        self.C = C
+        self.S = S
+        self.T = T
+        self.P = P
+
         self.points = points
         
         return points
