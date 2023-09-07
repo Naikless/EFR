@@ -229,12 +229,12 @@ class TaylorWave(Detonation):
             return self.P_CJ * (eta(x,t)*CJspeed/ a2_eq)**(2*n/(n-1))
 
 
-    def streamline(self,x0,t0,dt=1e-6,u_func=None,**kwargs):
+    def streamline(self,x0,t0,u_func=None,dt=1e-6,**kwargs):
 
         if not u_func:
             u_func = self.u
 
-        return streamline(x0,t0,dt=1e-6,u_func=u_func,**kwargs)
+        return streamline(x0,t0,u_func,dt=dt,**kwargs)
 
 
     def point_history(self,x0,t0,dt=1e-6):
@@ -261,7 +261,7 @@ class TaylorWave(Detonation):
                 statesDF = det_data.point_history(x0, t, dt)
                 return statesDF.iloc[-1]
 
-            with Pool(8, ) as p:
+            with Pool(8) as p:
                 try:
                     states = list(tqdm(p.imap(f, t), total=len(t)))
                 except KeyboardInterrupt:
@@ -355,6 +355,12 @@ class Det_data:
             self.P = LinearNDInterpolator(list(zip(x, t)), det.MoC.P)
             self.u = LinearNDInterpolator(list(zip(x, t)), det.MoC.U*a2_eq)
 
+            # Calling the interpolators once is required to create their cache
+            # Otherwise, each new parallel process starts from scratch again.
+            self.T(0,0)
+            self.P(0,0)
+            self.u(0,0)
+
         else:
             u_, P_, T_ = det.u, det.P, det.T
             self.u = lambda x,t : np.array([u_(x_,t_) for x_,t_ in zip(np.array(x).flatten(),np.array(t).flatten())])
@@ -373,7 +379,7 @@ class Det_data:
 
         u, P, T = self.u, self.P, self.T
 
-        x,t = streamline(x0, t0, u_func=u, dt=dt)
+        x,t = streamline(x0, t0, u, dt=dt)
 
         T_vec = T(x,t)
         P_vec = P(x,t)
@@ -389,13 +395,11 @@ class Det_data:
         # first time step
         gas.TPY = T_vec[0] , P_vec[0] , Y_init
 
-
         # construct reactor network
         r = ct.IdealGasConstPressureReactor(gas)
 
         sim = ct.ReactorNet([r])
         states = ct.SolutionArray(r.thermo)
-
 
         if len(t) == 1:
             states.append(T=T1, P=P1, X=X1)
@@ -405,7 +409,6 @@ class Det_data:
             statesDF[['x','t','u']] = x[0],t[0],u(x[0],t[0]-dt)
             # return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
             return statesDF
-
 
         sim.advance(t_r[1])
         states.append(r.thermo.state)
@@ -429,7 +432,7 @@ class Det_data:
 
 
 
-def streamline(x0,t0,dt=1e-6,u_func=None,**kwargs):
+def streamline(x0,t0,u_func,dt=1e-6,**kwargs):
 
     func = lambda t, x : [-u_func(x,t0-t)]
 
