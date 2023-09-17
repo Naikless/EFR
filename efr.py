@@ -130,9 +130,8 @@ class Detonation:
 
 class TaylorWave(Detonation):
 
-    def __init__(self, *args, u0=0, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.u0 = u0
         self.nu = 1 # polytropic ratio defined as 1 + dq / vdp, with dq defined by heat losses to the environment ("Thermodynamik", Baehr)
 
 
@@ -195,15 +194,15 @@ class TaylorWave(Detonation):
 
     def u(self,x,t):
         CJspeed, phi = self.CJspeed, self._phi
-        if  x/t > CJspeed:
-            return self.u0 
+        if  t == 0 or x/t > CJspeed:
+            return 0 
         else:
-            return self._np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed + self.u0
+            return self._np.heaviside(phi(x,t),0)*phi(x,t)*CJspeed
 
 
     def c(self,x,t):
         CJspeed, eta, u2, n = self.CJspeed, self._eta, self.u2, self.n
-        if x/t <= CJspeed - u2 * (n+1)/2:
+        if t == 0 or x/t <= CJspeed - u2 * (n+1)/2:
             return eta(CJspeed - u2 * (n+1)/2,1) * CJspeed
         else:
             return eta(x,t) * CJspeed
@@ -211,7 +210,7 @@ class TaylorWave(Detonation):
 
     def T(self,x,t):
         CJspeed, u2, eta, n, a2_eq = self.CJspeed, self.u2, self._eta, self.n, self.a2_eq
-        if x/t > CJspeed:
+        if t == 0 or x/t > CJspeed:
             return self.T1
         elif x/t <= CJspeed - u2 * (n+1)/2:
             return self.T_CJ * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**2
@@ -221,7 +220,7 @@ class TaylorWave(Detonation):
 
     def P(self,x,t):
         CJspeed, u2, eta, n, a2_eq = self.CJspeed, self.u2, self._eta, self.n, self.a2_eq
-        if x/t > CJspeed:
+        if t == 0 or x/t > CJspeed:
             return self.P1
         elif x/t <= CJspeed - u2 * (n+1)/2:
             return self.P_CJ * (eta(CJspeed - u2 * (n+1)/2,1)*CJspeed/ a2_eq)**(2*n/(n-1))
@@ -269,7 +268,7 @@ class TaylorWave(Detonation):
                 finally:
                     p.clear()
 
-        states_DF = pd.DataFrame(states)
+        states_DF = pd.DataFrame(states).reset_index(drop=True)
 
         return states_DF
 
@@ -301,7 +300,7 @@ class TaylorWave(Detonation):
                 finally:
                     p.clear()
 
-        states_DF =  pd.DataFrame(states)       
+        states_DF =  pd.DataFrame(states).reset_index(drop=True)  
 
         # combine DFR and ZND data, if detonation is still inside tube
         if not all(states_DF['T'] > 1.01*self.T1) and insertZND: #TODO! does not work for overdriven
@@ -348,12 +347,16 @@ class Det_data:
         if hasattr(det, 'MoC'):
             L = det.MoC.L
             a2_eq = det.a2_eq
-            x = det.MoC.x*L
-            t = det.MoC.t*L/a2_eq
+            x = det.MoC.x
+            t = det.MoC.t
 
-            self.T = LinearNDInterpolator(list(zip(x, t)), det.MoC.T)
-            self.P = LinearNDInterpolator(list(zip(x, t)), det.MoC.P)
-            self.u = LinearNDInterpolator(list(zip(x, t)), det.MoC.U*a2_eq)
+            T = LinearNDInterpolator(list(zip(x, t)), det.MoC.T)
+            P = LinearNDInterpolator(list(zip(x, t)), det.MoC.P)
+            U = LinearNDInterpolator(list(zip(x, t)), det.MoC.U)
+            
+            self.T = lambda x,t : T(x/L, t*a2_eq/L)
+            self.P = lambda x,t : P(x/L, t*a2_eq/L)
+            self.u = lambda x,t : U(x/L, t*a2_eq/L)*a2_eq
 
             # Calling the interpolators once is required to create their cache
             # Otherwise, each new parallel process starts from scratch again.
@@ -363,9 +366,9 @@ class Det_data:
 
         else:
             u_, P_, T_ = det.u, det.P, det.T
-            self.u = lambda x,t : np.array([u_(x_,t_) for x_,t_ in zip(np.array(x).flatten(),np.array(t).flatten())])
-            self.P = lambda x,t : np.array([P_(x_,t_) for x_,t_ in zip(np.array(x).flatten(),np.array(t).flatten())])
-            self.T = lambda x,t : np.array([T_(x_,t_) for x_,t_ in zip(np.array(x).flatten(),np.array(t).flatten())])
+            self.u = lambda x,t : np.squeeze([u_(x_,t_) for x_,t_ in zip(np.asarray(x).flatten(),np.asarray(t).flatten())])
+            self.P = lambda x,t : np.squeeze([P_(x_,t_) for x_,t_ in zip(np.asarray(x).flatten(),np.asarray(t).flatten())])
+            self.T = lambda x,t : np.squeeze([T_(x_,t_) for x_,t_ in zip(np.asarray(x).flatten(),np.asarray(t).flatten())])
 
     def point_history(self,x0,t0,dt):
         """
@@ -402,11 +405,11 @@ class Det_data:
         states = ct.SolutionArray(r.thermo)
 
         if len(t) == 1:
-            states.append(T=T1, P=P1, X=X1)
+            states.append(T=T_vec[0], P=P_vec[0], Y=Y_init)
             # stateMatrix, columns = states.collect_data(cols=('T','P','X','density','mean_molecular_weight'))
             statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
 
-            statesDF[['x','t','u']] = x[0],t[0],u(x[0],t[0]-dt)
+            statesDF[['x','t','u']] = x[0],t[0],float(u(x[0],t[0]))
             # return stateMatrix, columns, self._np.array(t), self._np.array([u(x[0],t[0])])
             return statesDF
 
@@ -425,7 +428,7 @@ class Det_data:
         statesDF = states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
         statesDF['x'] = x[1:]
         statesDF['t'] = t[1:]
-        statesDF['u'] = [u(x_,t_-dt) for x_,t_ in zip(x[1:],t[1:])]
+        statesDF['u'] = [float(u(x_,t_)) for x_,t_ in zip(x[1:],t[1:])]
 
         # return stateMatrix, columns, self._np.array(t[1:]), self._np.array([u(x_,t_) for x_,t_ in zip(x[1:],t[1:])])
         return statesDF

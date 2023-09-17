@@ -122,7 +122,7 @@ class PointList(list):
 
         """
         points = self.flatten()
-        idx = np.argmin(((np.array(points.x) - x)**2 + (np.array(points.t)-t)**2)**0.5)
+        idx = np.argmin(((np.asarray(points.x) - x)**2 + (np.asarray(points.t)-t)**2)**0.5)
         return points[idx], idx
 
 
@@ -202,12 +202,12 @@ class MoC:
         
         
         flat_point_list = points.flatten()
-        x = np.array(flat_point_list.x)
-        t = np.array(flat_point_list.t)
+        x = np.asarray(flat_point_list.x)
+        t = np.asarray(flat_point_list.t)
         
-        U = np.array(flat_point_list.U)
-        C = np.array(flat_point_list.C)
-        S = np.array(flat_point_list.S)
+        U = np.asarray(flat_point_list.U)
+        C = np.asarray(flat_point_list.C)
+        S = np.asarray(flat_point_list.S)
         T = (C * self.det.a2_eq)**2 / self.det.gamma_eq / self.R
         P = self.det.P_CJ * C**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(self.S_CJ - S))
         
@@ -357,7 +357,7 @@ class MoC:
         points = PointList([])
         while 1:
             pl_new = self._new_Cminus(p_start,pl_new[skip+1:])
-            if len(pl_new) <= skip+1 or any(np.abs(np.array(pl_new.x)[-10:-1]-1) < 1e-8):
+            if len(pl_new) <= skip+1 or any(np.abs(np.asarray(pl_new.x)[-10:-1]-1) < 1e-8):
                 break
             points.append(pl_new)
             p_start = self.add_end_point(pl_new[skip+1], pl_new[skip])[0]
