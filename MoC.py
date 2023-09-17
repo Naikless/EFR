@@ -37,7 +37,7 @@ Point = namedtuple('Point', (field for field in 'xtUCS'),defaults=(0,0,0))
 
 
 
-def plot_point(p,radius=5e-4,invert = False,**kwargs):
+def plot_point(p,radius=5e-4,invert = False, C_p = True, C_m = True, C_U=True, **kwargs):
     """
     Visualize point as scatter with lines indicating the characteristics.
 
@@ -60,14 +60,18 @@ def plot_point(p,radius=5e-4,invert = False,**kwargs):
     sign = -1 if invert else 1
     
     plt.scatter(p.x,p.t,**kwargs)
-    t_Cplus = np.linspace(0, radius / ((1+(p.U+p.C)**2))**0.5, 10)
-    plt.plot(p.x + (p.U+p.C) * t_Cplus * sign, p.t + t_Cplus  *sign, 'k--')
     
-    t_Cminus = np.linspace(0, radius / ((1+(p.U-p.C)**2))**0.5, 10)
-    plt.plot(p.x + (p.U-p.C) * t_Cminus *sign, p.t + t_Cminus *sign, 'k-.')
+    if C_p:
+        t_Cplus = np.asarray([0, radius / ((1+(p.U+p.C)**2))**0.5])
+        plt.plot(p.x + (p.U+p.C) * t_Cplus * sign, p.t + t_Cplus  *sign, 'k--')
+        
+    if C_m:
+        t_Cminus = np.asarray([0, radius / ((1+(p.U-p.C)**2))**0.5])
+        plt.plot(p.x + (p.U-p.C) * t_Cminus *sign, p.t + t_Cminus *sign, 'k-.')
     
-    t_U = np.linspace(0, radius / ((1+(p.U)**2))**0.5, 10)
-    plt.plot(p.x + p.U * t_U*sign, p.t + t_U*sign, 'k:')
+    if C_U:
+        t_U = np.asarray([0, radius / ((1+(p.U)**2))**0.5])
+        plt.plot(p.x + p.U * t_U*sign, p.t + t_U*sign, 'k:')
 
 
 
@@ -224,7 +228,7 @@ class MoC:
         return points
 
     
-    def _det_points(self, C_minus_start, N):
+    def _det_points(self, C_minus_start, N, **kwargs):
         """
         Solve characteristics along the detonation wave.
 
@@ -250,7 +254,7 @@ class MoC:
         
         for i in range(N):
             p_start = Point(pl[0].x + dx, pl[0].t + dt, U_CJ, C_CJ, S_CJ)
-            pl = self._new_Cminus(p_start,pl[1:])
+            pl = self._new_Cminus(p_start,pl[1:], **kwargs)
             p_zero = self.add_zero_point(pl[-1])
             pl.append(p_zero)
             points.append(pl) 
@@ -259,7 +263,7 @@ class MoC:
         return points
     
     
-    def _interpolate_points(self,last_C_minus):
+    def _interpolate_points(self,last_C_minus,n=10):
         """
         Interpolate additional characteristics between last detonation C- and 
         first expansion C-.
@@ -279,8 +283,8 @@ class MoC:
         pl = last_C_minus
         points = PointList([])
         
-        for step in np.arange(0.1,1.1,0.1):
-            p_start = Point(*(np.array(last_C_minus[0])*(1-step) + np.array(p_new)*step))
+        for step in np.linspace(0,1,n+1)[1:]:
+            p_start = Point(*(np.asarray(last_C_minus[0])*(1-step) + np.asarray(p_new)*step))
             pl = [p for p in pl if p.t >= p_start.t]
             pl = self._new_Cminus(p_start,pl)
             points.append(pl)
@@ -289,7 +293,7 @@ class MoC:
         return points
     
     
-    def _new_Cminus(self, p_start, last_C_minus,**kwargs):
+    def _new_Cminus(self, p_start, last_C_minus, pad=True, **kwargs):
         """
         Calculate new C- characteristic from a starting point along the
         detonation, following the previous C- characteristic.
@@ -321,8 +325,8 @@ class MoC:
         dist_p0p1 = ((p1.x-p0.x)**2 + (p1.t-p0.t)**2)**0.5
         dist_p1p2 = ((p2.x-p1.x)**2 + (p2.t-p1.t)**2)**0.5
         
-        if dist_p0p1 > dist_p1p2:
-            p_add = Point(*(np.array(p1) + np.array(p0))/2)
+        if dist_p0p1 > dist_p1p2 and pad:
+            p_add = Point(*(np.asarray(p1) + np.asarray(p0))/2)
             plist_new = PointList([p0] + [p_add] + plist_new[1:])
                
         return plist_new
