@@ -287,6 +287,8 @@ class MoC:
             p_start = Point(*(np.asarray(last_C_minus[0])*(1-step) + np.asarray(p_new)*step))
             pl = [p for p in pl if p.t >= p_start.t]
             pl = self._new_Cminus(p_start,pl)
+            p_zero = self.add_zero_point(pl[-1])
+            pl.append(p_zero)
             points.append(pl)
         
         self.interp_points = points
@@ -355,16 +357,16 @@ class MoC:
         """
         
         p_new = self.add_end_point(last_C_minus[skip+1], last_C_minus[skip])[0]
-        pl_new = last_C_minus
+        pl = last_C_minus
         p_start = p_new
         
         points = PointList([])
         while 1:
-            pl_new = self._new_Cminus(p_start,pl_new[skip+1:])
-            if len(pl_new) <= skip+1 or any(np.abs(np.asarray(pl_new.x)[-10:-1]-1) < 1e-8):
+            pl = self._new_Cminus(p_start,pl[skip+1:])
+            if len(pl) <= skip+1 or any(np.abs(np.asarray(pl.x)[-10:-1]-1) < 1e-8):
                 break
-            points.append(pl_new)
-            p_start = self.add_end_point(pl_new[skip+1], pl_new[skip])[0]
+            points.append(pl)
+            p_start = self.add_end_point(pl[skip+1], pl[skip])[0]
             if not p_start:
                 break
         
@@ -704,7 +706,7 @@ class MoC:
             P = P_CJ * C3**(2*gamma_eq/(gamma_eq-1)) * np.exp(gamma_eq*(S_CJ - S3))
             if P < self.P_crit:
                 print('not choked!')
-                return None,None
+                # return None,None
                          
             U13 = (U1+U3)/2            
             C13 = (C1+C3)/2
