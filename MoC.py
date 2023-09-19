@@ -135,7 +135,7 @@ class MoC:
     """
     Object to contain the calculated fields from the MoC.
     """
-    def __init__(self, det : 'efr.TaylorWave', L, D, ds, N, cf=0, T_w=None, P_out=None):
+    def __init__(self, det : 'efr.TaylorWave', L, D, ds, N, cf=0, t_max=6, T_w=None, P_out=None):
         self.p_isentropic = det.P
         self.u_isentropic = det.u
         self.c_isentropic = det.c
@@ -146,6 +146,7 @@ class MoC:
         self.cf = cf
         self.ds = ds
         self.N = N
+        self.t_max = t_max
         
         T_w = T_w if T_w else det.T1
         P_out = P_out if P_out else det.P1
@@ -256,7 +257,8 @@ class MoC:
             p_start = Point(pl[0].x + dx, pl[0].t + dt, U_CJ, C_CJ, S_CJ)
             pl = self._new_Cminus(p_start,pl[1:], **kwargs)
             p_zero = self.add_zero_point(pl[-1])
-            pl.append(p_zero)
+            if p_zero.t <= self.t_max:
+                pl.append(p_zero)
             points.append(pl) 
         
         self.det_points = points
@@ -288,7 +290,8 @@ class MoC:
             pl = [p for p in pl if p.t >= p_start.t]
             pl = self._new_Cminus(p_start,pl)
             p_zero = self.add_zero_point(pl[-1])
-            pl.append(p_zero)
+            if p_zero.t <= self.t_max:
+                pl.append(p_zero)
             points.append(pl)
         
         self.interp_points = points
@@ -355,7 +358,7 @@ class MoC:
             New C- characteristic.
 
         """
-        
+        skip = (np.asarray(last_C_minus.x) <= (1-1e-4)).argmax()
         p_new = self.add_end_point(last_C_minus[skip+1], last_C_minus[skip])[0]
         pl = last_C_minus
         p_start = p_new
@@ -363,9 +366,13 @@ class MoC:
         points = PointList([])
         while 1:
             pl = self._new_Cminus(p_start,pl[skip+1:])
-            if len(pl) <= skip+1 or any(np.abs(np.asarray(pl.x)[-10:-1]-1) < 1e-8):
+            if any(np.abs(np.asarray(pl.x)[-10:-1]-1) < 1e-8):
                 break
+            p_zero = self.add_zero_point(pl[-1])
+            if p_zero.t <= self.t_max:
+                pl.append(p_zero)
             points.append(pl)
+            skip = (np.asarray(pl.x) <= (1-1e-4)).argmax()
             p_start = self.add_end_point(pl[skip+1], pl[skip])[0]
             if not p_start:
                 break
@@ -601,7 +608,7 @@ class MoC:
                 break
             else:
                 t3 = t3_
-                
+               
         return Point(x3,t3,U3,C3,S3)
     
     
@@ -682,7 +689,8 @@ class MoC:
                     break
                 else:
                     if n4 > 100:
-                        raise Exception("Couldn't converge to new grid point, maybe reduce tmax.")
+                        print(f"Couldn't converge to new end point for t={t3}. Finishing.")
+                        return None,None
                     x4 = x4_; t4 = t4_
                     n4 += 1
             
