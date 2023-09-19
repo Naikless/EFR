@@ -245,9 +245,9 @@ class TaylorWave(Detonation):
 
     def time_signal(self,x0,t0,dt=1e-6,multiprocessing=True):
         t = self._np.arange(dt,t0,dt)
-        t = t[t >= x0/self.CJspeed]
 
         det_data = Det_data(self)
+        t = t[~np.isnan(det_data.u(x0,t))]
 
         if not multiprocessing:
             states = []
@@ -276,9 +276,9 @@ class TaylorWave(Detonation):
     def profile(self,t0,dx,L=1.2,dt=1e-6,multiprocessing=True,insertZND=True):
 
         x = self._np.arange(0,L,dx)
-        x = x[x <= t0 * self.CJspeed]
 
         det_data = Det_data(self)
+        x = x[~np.isnan(det_data.u(x,t0))]
 
         if not multiprocessing:
             states = []
@@ -303,7 +303,7 @@ class TaylorWave(Detonation):
         states_DF =  pd.DataFrame(states).reset_index(drop=True)  
 
         # combine DFR and ZND data, if detonation is still inside tube
-        if not all(states_DF['T'] > 1.01*self.T1) and insertZND: #TODO! does not work for overdriven
+        if self.CJspeed * t0 < L:
             states = states_DF.drop(columns='x').to_numpy()
             x_front = x[states[:,0] == states[-1,0]][0]
             x_ZND = x_front-self.znd()['distance'][::-1]
