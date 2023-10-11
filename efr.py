@@ -342,7 +342,12 @@ class Det_data:
     def __init__(self, det):
         self.P1, self.T1, self.X1 = det.P1, det.T1, det.X1
         self.mech = det.mech
-        self.Y_init = det.znd()['species'][:,-1]
+        states = ct.SolutionArray(ct.Solution(det.mech))
+        for T, P, Y in zip(det.znd()['T'],det.znd()['P'],det.znd()['species'].T):
+            states.append(T=T, P=P, Y=Y)
+        Ma_eq = det.znd()['U'] / soundspeed_eq(states)
+        CJ_idx = np.argmin(np.abs(Ma_eq-1))
+        self.Y_init = det.znd()['species'][:,CJ_idx]
 
         if hasattr(det, 'MoC'):
             L = det.MoC.L
