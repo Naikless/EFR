@@ -248,7 +248,7 @@ class MoC:
         """
         points = PointList([])
         pl = C_minus_start
-        dx = (1-pl[0].x)/N
+        dx = (1-pl[0].x)/N*0.999
         dt = dx / self.det.CJspeed * self.det.a2_eq
         
         U_CJ, C_CJ, S_CJ = self.U_CJ, self.C_CJ, self.S_CJ
@@ -328,9 +328,8 @@ class MoC:
         
         p0,p1,p2 = plist_new[:3]
         dist_p0p1 = ((p1.x-p0.x)**2 + (p1.t-p0.t)**2)**0.5
-        dist_p1p2 = ((p2.x-p1.x)**2 + (p2.t-p1.t)**2)**0.5
         
-        if dist_p0p1 > dist_p1p2 and pad:
+        if dist_p0p1 > self.ds_CJ and pad:
             p_add = Point(*(np.asarray(p1) + np.asarray(p0))/2)
             plist_new = PointList([p0] + [p_add] + plist_new[1:])
                
@@ -554,6 +553,7 @@ class MoC:
             
             pl.append(p_new)
         
+        self.ds_CJ = ((pl[1].x-pl[0].x)**2 + (pl[1].t-pl[0].t)**2)**0.5
         return pl
     
     
