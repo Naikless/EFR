@@ -269,6 +269,40 @@ class TaylorWave(Detonation):
                     p.clear()
 
         states_DF = pd.DataFrame(states).reset_index(drop=True)
+        
+        
+        # add ZND profile
+        trimmed_znd_states = trim_znd(self._znd_out, self.mech)
+        
+        t_fix = trimmed_znd_states.distance/self.CJspeed + t[0]
+        trimmed_znd_states.t = t_fix
+        
+        # cut off ZND profile where Ma_eq ~ 1
+        znd_DF = trimmed_znd_states.to_pandas(cols=('T','P','X','density',
+                                                    'mean_molecular_weight',
+                                                    't','velocity'))
+        znd_DF.rename(columns={'velocity':'u'},inplace=True)
+        znd_DF['u'] = self.CJspeed - znd_DF['u']
+        znd_DF['x'] = x0
+        
+        # add initial states
+        gas = ct.Solution(self.mech)
+        gas.TPX = self.T1, self.P1, self.X1
+        states_init = initial_state(gas)
+        dt_ZND = znd_DF.t[1]- znd_DF.t[0]
+        states_init.t = [0, t[0] - dt_ZND ]
+        
+        states_init_DF = states_init.to_pandas(cols=('T','P','X','density',
+                                                    'mean_molecular_weight',
+                                                    't','velocity'))
+        
+        states_init_DF.rename(columns={'velocity':'u'},inplace=True)
+        states_init_DF['x'] = x0
+        
+        # shift time signal by time intervall of ZND profile
+        states_DF['t'] = states_DF.t + (znd_DF.t.iloc[-1] - znd_DF.t.iloc[0]) + dt_ZND
+        
+        states_DF = pd.concat((states_init_DF, znd_DF, states_DF), ignore_index=True)
 
         return states_DF
 
@@ -342,12 +376,9 @@ class Det_data:
     def __init__(self, det):
         self.P1, self.T1, self.X1 = det.P1, det.T1, det.X1
         self.mech = det.mech
-        states = ct.SolutionArray(ct.Solution(det.mech))
-        for T, P, Y in zip(det.znd()['T'],det.znd()['P'],det.znd()['species'].T):
-            states.append(T=T, P=P, Y=Y)
-        Ma_eq = det.znd()['U'] / soundspeed_eq(states)
-        CJ_idx = np.argmin(np.abs(Ma_eq-1))
-        self.Y_init = det.znd()['species'][:,CJ_idx]
+        trimmed_znd_states = trim_znd(det._znd_out, det.mech)
+
+        self.Y_init = trimmed_znd_states.Y[-1]
 
         if hasattr(det, 'MoC'):
             L = det.MoC.L
@@ -380,7 +411,6 @@ class Det_data:
         calculate time history of particle at location x at time t with time 
         resolution dt
         """
-        P1, T1, X1 = self.P1, self.T1, self.X1
 
         gas = ct.Solution(self.mech)
         Y_init = self.Y_init
@@ -449,3 +479,24 @@ def streamline(x0,t0,u_func,dt=1e-6,**kwargs):
     t = t0 - result.t
 
     return x,t
+
+def trim_znd(znd_output, mech):
+    states = ct.SolutionArray(ct.Solution(mech), extra=('t','distance','velocity'))
+    for T, P, Y, t, x, v in zip(znd_output['T'],znd_output['P'],
+                                znd_output['species'].T, znd_output['time'], 
+                                znd_output['distance'], znd_output['U']):
+        states.append(T=T, P=P, Y=Y, t=t, distance=x, velocity=v)
+    
+    Ma_eq = znd_output['U'] / soundspeed_eq(states)
+    CJ_idx = np.argmin(np.abs(Ma_eq-1))
+    
+    states = states[:CJ_idx]
+    
+    return states
+
+def initial_state(gas):
+    states = ct.SolutionArray(gas, extra=('t','velocity'))
+    for i in range(2):
+        states.append(T=gas.T, P=gas.P, X=gas.X, t=0, velocity=0)
+    
+    return states
