@@ -270,39 +270,8 @@ class TaylorWave(Detonation):
 
         states_DF = pd.DataFrame(states).reset_index(drop=True)
         
-        
         # add ZND profile
-        trimmed_znd_states = trim_znd(self._znd_out, self.mech)
-        
-        t_fix = trimmed_znd_states.distance/self.CJspeed + t[0]
-        trimmed_znd_states.t = t_fix
-        
-        # cut off ZND profile where Ma_eq ~ 1
-        znd_DF = trimmed_znd_states.to_pandas(cols=('T','P','X','density',
-                                                    'mean_molecular_weight',
-                                                    't','velocity'))
-        znd_DF.rename(columns={'velocity':'u'},inplace=True)
-        znd_DF['u'] = self.CJspeed - znd_DF['u']
-        znd_DF['x'] = x0
-        
-        # add initial states
-        gas = ct.Solution(self.mech)
-        gas.TPX = self.T1, self.P1, self.X1
-        states_init = initial_state(gas)
-        dt_ZND = znd_DF.t[1]- znd_DF.t[0]
-        states_init.t = [0, t[0] - dt_ZND ]
-        
-        states_init_DF = states_init.to_pandas(cols=('T','P','X','density',
-                                                    'mean_molecular_weight',
-                                                    't','velocity'))
-        
-        states_init_DF.rename(columns={'velocity':'u'},inplace=True)
-        states_init_DF['x'] = x0
-        
-        # shift time signal by time intervall of ZND profile
-        states_DF['t'] = states_DF.t + (znd_DF.t.iloc[-1] - znd_DF.t.iloc[0]) + dt_ZND
-        
-        states_DF = pd.concat((states_init_DF, znd_DF, states_DF), ignore_index=True)
+        states_DF = add_ZND_to_EFR(self, states_DF)
 
         return states_DF
 
@@ -335,37 +304,11 @@ class TaylorWave(Detonation):
                     p.clear()
 
         states_DF =  pd.DataFrame(states).reset_index(drop=True)  
+        
+        if insertZND:
+            states_DF = add_ZND_to_EFR(self, states_DF)
 
-        # combine DFR and ZND data, if detonation is still inside tube
-        if self.CJspeed * t0 < L:
-            states = states_DF.drop(columns='x').to_numpy()
-            x_front = x[states[:,0] == states[-1,0]][0]
-            x_ZND = x_front-self.znd()['distance'][::-1]
-            filter_array = x < x_ZND[0]
-            x_comb = self._np.concatenate((x[filter_array],x_ZND,x[~(x < x_ZND[-1])]))
-
-            gas = self._ct.Solution(self.mech)
-            ZND_states = self._ct.SolutionArray(gas)
-
-            u_znd = []
-            for T,P,Y,u in zip(self.znd()['T'], self.znd()['P'], self.znd()['species'].transpose(), self.znd()['U1']-self.znd()['U']):
-                ZND_states.append(TPY=(T,P,Y))
-                u_znd.append(u)
-            ZND_states = ZND_states.to_pandas(cols=('T','P','X','density','mean_molecular_weight'))
-            ZND_states['t'] = t0
-            ZND_states['u'] = u_znd
-
-            ZND_states_array = ZND_states.to_numpy()[::-1]
-
-            states_comb = list(self._np.concatenate((states[filter_array],ZND_states_array,states[~(x < x_ZND[-1])])))
-
-            states_comb = pd.DataFrame(states_comb,columns=ZND_states.columns)
-            states_comb['x'] = x_comb
-
-        else:
-            states_comb = states_DF
-
-        return states_comb
+        return states_DF
 
 
 
@@ -411,7 +354,7 @@ class Det_data:
         calculate time history of particle at location x at time t with time 
         resolution dt
         """
-
+        ct.suppress_thermo_warnings()
         gas = ct.Solution(self.mech)
         Y_init = self.Y_init
 
@@ -495,8 +438,65 @@ def trim_znd(znd_output, mech):
     return states
 
 def initial_state(gas):
-    states = ct.SolutionArray(gas, extra=('t','velocity'))
+    states = ct.SolutionArray(gas, extra=('x','t','velocity'))
     for i in range(2):
-        states.append(T=gas.T, P=gas.P, X=gas.X, t=0, velocity=0)
+        states.append(T=gas.T, P=gas.P, X=gas.X, x=0, t=0, velocity=0)
     
     return states
+
+def add_ZND_to_EFR(det, efr_data):
+
+    trimmed_znd_states = trim_znd(det._znd_out, det.mech)
+    
+    t_fix = trimmed_znd_states.distance/det.CJspeed + efr_data.t[0]
+    trimmed_znd_states.t = t_fix
+    
+    # cut off ZND profile where Ma_eq ~ 1
+    znd_DF = trimmed_znd_states.to_pandas(cols=('T','P','X','density',
+                                                'mean_molecular_weight',
+                                                't','distance','velocity'))
+    znd_DF.rename(columns={'velocity':'u'},inplace=True)
+    znd_DF.rename(columns={'distance':'x'},inplace=True)
+    znd_DF['u'] = det.CJspeed - znd_DF['u']
+    # znd_DF['x'] = efr_data.x
+    
+    # add initial states
+    gas = ct.Solution(det.mech)
+    gas.TPX = det.T1, det.P1, det.X1
+    states_init = initial_state(gas)
+    dt_ZND = znd_DF.t[1]- znd_DF.t[0]
+    dx_ZND = znd_DF.x[1]- znd_DF.x[0]
+    
+    # decide whether EFR data is time signal or profile
+    if len(efr_data.x.unique()) == 1:
+        timeSignal = True
+        states_init.t = [0, efr_data.t[0] - dt_ZND ]
+        states_init.x = efr_data.x[0]
+        # shift time signal by time intervall of ZND profile
+        efr_data['t'] = efr_data.t + (znd_DF.t.iloc[-1] - znd_DF.t.iloc[0]) + dt_ZND
+    else:
+        # profile
+        timeSignal = False
+        znd_DF = znd_DF.reindex(index=znd_DF.index[::-1])
+        znd_DF.reset_index(inplace=True, drop=True)
+        # move ZND profile ahead of EFR data
+        x_ZND = znd_DF.x.to_numpy()
+        x_ZND = x_ZND[0] - x_ZND
+        znd_DF.x = x_ZND + efr_data.x.iloc[-1] + dx_ZND
+        # add initial values at the right end
+        dx_EFR = efr_data.x[1] - efr_data.x[0]
+        states_init.x = znd_DF.x.iloc[-1] + np.array([dx_ZND, dx_EFR])
+        states_init.t = efr_data.t[0]
+    
+    states_init_DF = states_init.to_pandas(cols=('T','P','X','density',
+                                                'mean_molecular_weight',
+                                                'x','t','velocity'))
+    
+    states_init_DF.rename(columns={'velocity':'u'},inplace=True)
+    
+    if timeSignal:
+        efr_data = pd.concat((states_init_DF, znd_DF, efr_data), ignore_index=True)
+    else:
+        efr_data = pd.concat((efr_data, znd_DF, states_init_DF), ignore_index=True)
+
+    return efr_data
